@@ -51,7 +51,7 @@ export const AuthPage: React.FC = () => {
   const { login, register } = useAuth();
   const { showToast } = useToast();
 
-  const [mode, setMode] = useState<'login' | 'register'>('login');
+  const [mode, setMode] = useState<'login' | 'register'>(() => new URLSearchParams(window.location.search).has('ref') ? 'register' : 'login');
 
   // Login fields
   const [loginEmail, setLoginEmail] = useState('');
@@ -68,7 +68,7 @@ export const AuthPage: React.FC = () => {
   const [regCity, setRegCity] = useState('');
   const [regPassword, setRegPassword] = useState('');
   const [regConfirmPwd, setRegConfirmPwd] = useState('');
-  const [regReferral, setRegReferral] = useState('');
+  const [regReferral, setRegReferral] = useState(() => new URLSearchParams(window.location.search).get('ref')?.toUpperCase() || '');
   const [regTerms, setRegTerms] = useState(false);
   const [showRegPwd, setShowRegPwd] = useState(false);
   const [showRegConfirmPwd, setShowRegConfirmPwd] = useState(false);
@@ -109,7 +109,7 @@ export const AuthPage: React.FC = () => {
         setError(result.message || 'Invalid email or password');
       }
     } else {
-      const result = await register(regName, regEmail, regPhone, regPassword);
+      const result = await register(regName, regEmail, regPhone, regPassword, regReferral || undefined);
       if (result.success) {
         showToast('Account created! Please check your email to verify your account.', 'success');
         window.location.href = '/customer/dashboard';
@@ -198,10 +198,8 @@ export const AuthPage: React.FC = () => {
               <div className="bg-slate-800/60 border border-slate-700/60 text-slate-400 text-xs rounded-xl px-4 py-3 flex items-center gap-2">
                 <ShieldCheck className="w-4 h-4 shrink-0 text-slate-500" />
                 <span>
-                  <strong className="text-slate-300">Staff/Admin?</strong> You need an invitation link from your administrator. Contact{' '}
-                  <a href="mailto:info@internextbusinesssystem.co.ke" className="text-cyan-400 underline">
-                    info@internextbusinesssystem.co.ke
-                  </a>
+                  <strong className="text-slate-300">Staff/Admin?</strong> Register with your administrator’s signup code, or complete the one-time setup if no administrator exists.{' '}
+                  <a href="/admin/signup" className="text-cyan-400 underline">Open staff registration</a>
                 </span>
               </div>
             )}

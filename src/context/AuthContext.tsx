@@ -17,7 +17,8 @@ interface AuthContextType {
   isLoading: boolean;
   can: (permission: string) => boolean;
   login: (email: string, password: string) => Promise<AuthResult>;
-  register: (name: string, email: string, phone: string, password: string) => Promise<AuthResult>;
+  register: (name: string, email: string, phone: string, password: string, referralCode?: string) => Promise<AuthResult>;
+  registerStaff: (name: string, email: string, phone: string, password: string, invitationCode?: string, referralCode?: string) => Promise<AuthResult>;
   logout: () => Promise<void>;
   logoutAllDevices: () => Promise<void>;
   updateProfile: (patch: Partial<Pick<User, 'name' | 'phone' | 'avatar'>>) => Promise<AuthResult>;
@@ -76,12 +77,12 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
   };
 
-  const register = async (name: string, email: string, phone: string, password: string): Promise<AuthResult> => {
+  const register = async (name: string, email: string, phone: string, password: string, referralCode?: string): Promise<AuthResult> => {
     try {
       const res = await fetch('/api/auth/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, email, phone, password })
+        body: JSON.stringify({ name, email, phone, password, referralCode })
       });
       const data = await parseJson(res);
       if (res.ok && data?.success) {
@@ -90,6 +91,24 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         return { success: true };
       }
       return { success: false, message: data?.message || 'Unable to create account' };
+    } catch {
+      return { success: false, message: 'Unable to reach the server. Please try again.' };
+    }
+  };
+
+  const registerStaff = async (name: string, email: string, phone: string, password: string, invitationCode?: string, referralCode?: string): Promise<AuthResult> => {
+    try {
+      const res = await fetch('/api/auth/staff-register', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, email, phone, password, invitationCode, referralCode })
+      });
+      const data = await parseJson(res);
+      if (res.ok && data?.success) {
+        setUser(data.user);
+        setPermissions(data.permissions || []);
+        return { success: true, user: data.user };
+      }
+      return { success: false, message: data?.message || 'Unable to create staff account' };
     } catch {
       return { success: false, message: 'Unable to reach the server. Please try again.' };
     }
@@ -150,6 +169,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         can,
         login,
         register,
+        registerStaff,
         logout,
         logoutAllDevices,
         updateProfile,

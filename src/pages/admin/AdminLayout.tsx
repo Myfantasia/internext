@@ -18,7 +18,8 @@ import {
   Award,
   Newspaper,
   Mail,
-  UserPlus
+  UserPlus,
+  Gift
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
@@ -67,6 +68,7 @@ const NAV_GROUPS: NavGroup[] = [
     label: 'Marketing & Content',
     items: [
       { id: 'coupons', label: 'Promotions', icon: Tag },
+      { id: 'referrals', label: 'Referral Rewards', icon: Gift, adminOnly: true },
       { id: 'blog', label: 'Blog', icon: Newspaper, adminOnly: true },
       { id: 'reviews', label: 'Reviews', icon: Star },
       { id: 'newsletter', label: 'Newsletter', icon: Mail, adminOnly: true }

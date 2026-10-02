@@ -15,6 +15,7 @@ import { AdminBrands } from './AdminBrands';
 import { AdminBlog } from './AdminBlog';
 import { AdminNewsletter } from './AdminNewsletter';
 import { AdminStaff } from './AdminStaff';
+import { AdminReferralRewards } from './AdminReferralRewards';
 
 export const AdminPage: React.FC = () => {
   const [activeTab, setActiveTab] = useState<string>('dashboard');
@@ -28,6 +29,7 @@ export const AdminPage: React.FC = () => {
       {activeTab === 'orders' && <AdminOrders />}
       {activeTab === 'inventory' && <AdminInventory />}
       {activeTab === 'coupons' && <AdminCoupons />}
+      {activeTab === 'referrals' && <AdminReferralRewards />}
       {activeTab === 'customers' && <AdminCustomers />}
       {activeTab === 'reviews' && <AdminReviews />}
       {activeTab === 'blog' && <AdminBlog />}

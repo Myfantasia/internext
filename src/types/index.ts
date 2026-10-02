@@ -10,6 +10,7 @@ export interface User {
   addresses?: Address[];
   isActive?: boolean;
   emailVerifiedAt?: string | null;
+  referralCode?: string;
   createdAt?: string;
 }
 

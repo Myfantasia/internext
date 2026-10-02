@@ -7,6 +7,7 @@ import {
   resetPasswordSchema,
   verifyEmailSchema,
   updateProfileSchema,
+  staffRegisterSchema,
   formatZodError
 } from '../schemas/authSchemas.js';
 import { hashPassword, verifyPassword, validatePasswordStrength } from '../auth/passwords.js';
@@ -15,6 +16,9 @@ import {
   findUserByEmail,
   findUserById,
   createUser,
+  createFirstAdminIfAbsent,
+  findUserByReferralCode,
+  countAdmins,
   updateUserProfile,
   updateUserPassword,
   markEmailVerified,
@@ -30,6 +34,8 @@ import { requireAuth } from '../middleware/authorize.js';
 import { getCookieName } from '../middleware/session.js';
 import { sendVerificationEmail, sendPasswordResetEmail } from '../services/email/index.js';
 import { PERMISSIONS } from '../auth/permissions.js';
+import { registerWithStaffCode } from '../repositories/staffSignupCodesRepo.js';
+import { getReferralSummary, issueReferralRewards } from '../repositories/referralRepo.js';
 
 const router = express.Router();
 const COOKIE_NAME = getCookieName();
@@ -41,6 +47,13 @@ const authLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: { success: false, message: 'Too many attempts. Please try again later.' }
+});
+const staffSignupLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  limit: 8,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, message: 'Too many staff signup attempts. Try again later.' }
 });
 
 function setSessionCookie(res, token) {
@@ -75,7 +88,7 @@ router.post('/register', authLimiter, async (req, res) => {
   if (!parsed.success) {
     return res.status(400).json({ success: false, message: formatZodError(parsed.error) });
   }
-  const { name, email, phone, password } = parsed.data;
+  const { name, email, phone, password, referralCode } = parsed.data;
 
   const strength = validatePasswordStrength(password);
   if (!strength.valid) {
@@ -88,8 +101,15 @@ router.post('/register', authLimiter, async (req, res) => {
     return res.status(400).json({ success: false, message: 'Unable to register with the provided details' });
   }
 
+  let referredBy = null;
+  if (referralCode) {
+    const referrer = await findUserByReferralCode(referralCode);
+    if (!referrer) return res.status(400).json({ success: false, message: 'That referral code is invalid.' });
+    referredBy = referrer.id;
+  }
+
   const passwordHash = await hashPassword(password);
-  const user = await createUser({ name, email, phone, passwordHash, role: 'CUSTOMER' });
+  const user = await createUser({ name, email, phone, passwordHash, role: 'CUSTOMER', referredBy });
 
   const rawToken = generateOpaqueToken();
   await createToken('verify', { userId: user.id, tokenHash: hashOpaqueToken(rawToken), ttlMs: 24 * 60 * 60 * 1000 });
@@ -109,6 +129,71 @@ router.post('/register', authLimiter, async (req, res) => {
   });
 
   res.status(201).json({ success: true, user: toSafeUser(user), permissions: PERMISSIONS[user.role] });
+});
+
+// This status only controls the first-admin signup form. The write route uses
+// a database lock and rechecks the state, so it is not trusted for security.
+router.get('/staff-signup-status', async (_req, res) => {
+  const noAdmins = Number(await countAdmins()) === 0;
+  const bootstrapEmailConfigured = !!process.env.ADMIN_EMAIL?.trim();
+  res.json({
+    success: true,
+    firstAdminAvailable: noAdmins && bootstrapEmailConfigured,
+    bootstrapEmailRequired: noAdmins && !bootstrapEmailConfigured
+  });
+});
+
+// With no admins, exactly one request can claim the initial ADMIN account and
+// it does not need an invitation code. Later staff registrations must present
+// an admin-issued, email-bound, single-use code.
+router.post('/staff-register', staffSignupLimiter, async (req, res) => {
+  const parsed = staffRegisterSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ success: false, message: formatZodError(parsed.error) });
+  const { name, email, phone, password, invitationCode, referralCode } = parsed.data;
+  const strength = validatePasswordStrength(password);
+  if (!strength.valid) return res.status(400).json({ success: false, message: strength.errors.join('. ') });
+  if (await findUserByEmail(email)) return res.status(400).json({ success: false, message: 'An account already exists for this email.' });
+
+  let referredBy = null;
+  if (referralCode) {
+    const referrer = await findUserByReferralCode(referralCode);
+    if (!referrer) return res.status(400).json({ success: false, message: 'That referral code is invalid.' });
+    referredBy = referrer.id;
+  }
+
+  const passwordHash = await hashPassword(password);
+  let user;
+  if (invitationCode) {
+    const result = await registerWithStaffCode({
+      codeHash: hashOpaqueToken(invitationCode), name, email, phone, passwordHash, referredBy
+    });
+    if (result.error === 'existing_user') return res.status(400).json({ success: false, message: 'An account already exists for this email.' });
+    if (result.error) return res.status(400).json({ success: false, message: 'This staff code is invalid, expired, already used, or issued to another email.' });
+    user = result.user;
+  } else {
+    const bootstrapEmail = process.env.ADMIN_EMAIL?.trim().toLowerCase();
+    if (!bootstrapEmail) {
+      return res.status(503).json({ success: false, message: 'First-admin setup is not configured. Set ADMIN_EMAIL on the server, then try again.' });
+    }
+    if (email !== bootstrapEmail) {
+      return res.status(403).json({ success: false, message: 'The first administrator email must match the server-configured ADMIN_EMAIL.' });
+    }
+    user = await createFirstAdminIfAbsent({ name, email, phone, passwordHash, referredBy });
+    if (!user) return res.status(403).json({ success: false, message: 'The first administrator has already registered. Ask an administrator for a staff signup code.' });
+  }
+
+  const rawToken = generateOpaqueToken();
+  await createToken('verify', { userId: user.id, tokenHash: hashOpaqueToken(rawToken), ttlMs: 24 * 60 * 60 * 1000 });
+  sendVerificationEmail(user.email, `${APP_URL}/auth/verify-email?token=${rawToken}`).catch((e) =>
+    console.error('Failed to send staff verification email:', e)
+  );
+  await establishSession(req, res, user);
+  await logAudit({ actorId: user.id, actorName: user.name, action: 'STAFF_REGISTER', entity: 'User', entityId: user.id, newValue: user.role, ip: req.ip });
+  res.status(201).json({ success: true, user: toSafeUser(user), permissions: PERMISSIONS[user.role] });
+});
+
+router.get('/referrals', requireAuth, async (req, res) => {
+  res.json({ success: true, ...(await getReferralSummary(req.user.id)) });
 });
 
 // -----------------------------------------------------------------------
@@ -262,6 +347,10 @@ router.post('/verify-email', async (req, res) => {
     return res.status(400).json({ success: false, message: 'This verification link is invalid or has expired.' });
   }
   await markEmailVerified(record.userId);
+  const verifiedUser = await findUserById(record.userId);
+  if (verifiedUser?.referredBy) {
+    await issueReferralRewards(verifiedUser.referredBy);
+  }
   res.json({ success: true, message: 'Email verified successfully.' });
 });
 

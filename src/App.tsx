@@ -30,6 +30,7 @@ import { ResetPasswordPage } from './pages/ResetPasswordPage';
 import { VerifyEmailPage } from './pages/VerifyEmailPage';
 import { AcceptInvitePage } from './pages/AcceptInvitePage';
 import { AdminAuthPage } from './pages/AdminAuthPage';
+import { StaffSignupPage } from './pages/StaffSignupPage';
 import { NotFoundPage } from './pages/NotFoundPage';
 
 // Admin Page
@@ -126,6 +127,7 @@ export const App: React.FC = () => {
     if (pathname.startsWith('/auth/reset-password')) return <ResetPasswordPage key={currentLocation} />;
     if (pathname.startsWith('/auth/verify-email')) return <VerifyEmailPage key={currentLocation} />;
     if (pathname.startsWith('/auth/accept-invite')) return <AcceptInvitePage key={currentLocation} />;
+    if (pathname === '/admin/signup') return <StaffSignupPage key={currentLocation} />;
     if (pathname.startsWith('/auth') || pathname.startsWith('/login') || pathname.startsWith('/register')) return <AuthPage key={currentLocation} />;
     // Staff portal — must come before /admin to prevent catching /admin/login inside /admin
     if (pathname === '/admin/login' || pathname === '/admin/auth') return <AdminAuthPage key={currentLocation} />;

@@ -19,6 +19,9 @@ router.post('/validate', async (req, res) => {
   if (!coupon.isActive) {
     return res.status(400).json({ valid: false, message: 'This coupon is currently inactive' });
   }
+  if (coupon.validFrom && new Date(coupon.validFrom) > new Date()) {
+    return res.status(400).json({ valid: false, message: 'This coupon is not active yet' });
+  }
   if (coupon.validUntil && new Date(coupon.validUntil) < new Date()) {
     return res.status(400).json({ valid: false, message: 'This coupon has expired' });
   }

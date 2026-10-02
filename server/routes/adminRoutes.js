@@ -4,8 +4,22 @@ import { listAuditLogs, logAudit } from '../repositories/auditLogsRepo.js';
 import { getCompanyProfile, updateCompanyProfile, listDeliveryZones, replaceDeliveryZones, listStores, replaceStores } from '../repositories/companyProfileRepo.js';
 import { listSubscribers, subscribe } from '../repositories/newsletterRepo.js';
 import { requireRole, requirePermission } from '../middleware/authorize.js';
+import { referralRewardSettingsSchema, formatZodError } from '../schemas/authSchemas.js';
+import { getReferralRewardSettings, saveReferralRewardSettings } from '../repositories/referralRepo.js';
 
 const router = express.Router();
+
+router.get('/referral-rewards', requireRole('ADMIN'), async (_req, res) => {
+  res.json({ success: true, settings: await getReferralRewardSettings() });
+});
+
+router.put('/referral-rewards', requireRole('ADMIN'), async (req, res) => {
+  const parsed = referralRewardSettingsSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ success: false, message: formatZodError(parsed.error) });
+  const settings = await saveReferralRewardSettings({ ...parsed.data, updatedBy: req.user.id });
+  await logAudit({ actorId: req.user.id, actorName: req.user.name, action: 'REFERRAL_REWARDS_UPDATED', entity: 'Referral Rewards', entityId: String(settings.id), newValue: `${settings.referralsRequired} referrals for ${settings.discountValue}${settings.discountType === 'percentage' ? '%' : ' KES'}`, ip: req.ip });
+  res.json({ success: true, settings });
+});
 
 // Reshapes company_profile into the frontend's StoreSettings contract
 // (src/types/index.ts) — camelCase field names it already expects.

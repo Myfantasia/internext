@@ -52,6 +52,8 @@ export const users = pgTable('users', {
   passwordHash: text('password_hash').notNull(),
   phone: text('phone'),
   role: userRoleEnum('role').notNull().default('CUSTOMER'),
+  referralCode: text('referral_code').notNull().default(sql`'REF-' || upper(substr(md5(gen_random_uuid()::text), 1, 10))`),
+  referredBy: uuid('referred_by').references(() => users.id, { onDelete: 'set null' }),
   avatarUrl: text('avatar_url'),
   addresses: jsonb('addresses').notNull().default(sql`'[]'::jsonb`),
   isActive: boolean('is_active').notNull().default(true),
@@ -61,7 +63,9 @@ export const users = pgTable('users', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow()
 }, (t) => ([
-  uniqueIndex('users_email_unique').on(t.email)
+  uniqueIndex('users_email_unique').on(t.email),
+  uniqueIndex('users_referral_code_unique').on(t.referralCode),
+  index('users_referred_by_idx').on(t.referredBy)
 ]));
 
 // Tracks issued sessions so JWT cookies can be revoked (logout / logout-all-devices)
@@ -125,6 +129,25 @@ export const invites = pgTable('invites', {
 }, (t) => ([
   uniqueIndex('invites_token_hash_unique').on(t.tokenHash),
   check('invites_role_check', sql`${t.role} = 'SALES_MANAGER'`)
+]));
+
+// Single-use staff signup codes. Only their hash is stored; the raw code is
+// returned to an ADMIN once so it can be shared with the intended staff member.
+export const staffSignupCodes = pgTable('staff_signup_codes', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  email: text('email').notNull(),
+  role: userRoleEnum('role').notNull(),
+  codeHash: text('code_hash').notNull(),
+  createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
+  consumedBy: uuid('consumed_by').references(() => users.id, { onDelete: 'set null' }),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  consumedAt: timestamp('consumed_at', { withTimezone: true }),
+  revokedAt: timestamp('revoked_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow()
+}, (t) => ([
+  uniqueIndex('staff_signup_codes_hash_unique').on(t.codeHash),
+  index('staff_signup_codes_creator_idx').on(t.createdBy),
+  check('staff_signup_codes_role_check', sql`${t.role} in ('ADMIN', 'SALES_MANAGER')`)
 ]));
 
 // ---------------------------------------------------------------------------
@@ -284,6 +307,36 @@ export const coupons = pgTable('coupons', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow()
 }, (t) => ([
   uniqueIndex('coupons_code_unique').on(t.code)
+]));
+
+// Singleton settings record controlled by an ADMIN from the dashboard.
+export const referralRewardSettings = pgTable('referral_reward_settings', {
+  id: integer('id').primaryKey().default(1),
+  referralsRequired: integer('referrals_required').notNull().default(3),
+  discountType: discountTypeEnum('discount_type').notNull().default('percentage'),
+  discountValue: numeric('discount_value', { precision: 12, scale: 2 }).notNull().default('5'),
+  minOrderAmount: numeric('min_order_amount', { precision: 12, scale: 2 }).notNull().default('0'),
+  maxDiscountAmount: numeric('max_discount_amount', { precision: 12, scale: 2 }),
+  isActive: boolean('is_active').notNull().default(false),
+  updatedBy: uuid('updated_by').references(() => users.id, { onDelete: 'set null' }),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow()
+}, (t) => ([
+  check('referral_reward_settings_singleton_check', sql`${t.id} = 1`),
+  check('referral_reward_settings_threshold_check', sql`${t.referralsRequired} > 0`),
+  check('referral_reward_settings_value_check', sql`${t.discountValue} > 0`)
+]));
+
+// A referral reward is one single-use coupon issued for a milestone.
+export const referralRewards = pgTable('referral_rewards', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  milestone: integer('milestone').notNull(),
+  referralCount: integer('referral_count').notNull(),
+  couponCode: text('coupon_code').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow()
+}, (t) => ([
+  uniqueIndex('referral_rewards_user_milestone_unique').on(t.userId, t.milestone),
+  uniqueIndex('referral_rewards_coupon_code_unique').on(t.couponCode)
 ]));
 
 export const deliveryZones = pgTable('delivery_zones', {

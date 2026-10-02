@@ -210,7 +210,7 @@ export const AdminAuthPage: React.FC = () => {
                 </a>
               </p>
               <p className="text-[10px] text-slate-600">
-                Need access? Contact your system administrator.
+                Need access? <a href="/admin/signup" className="text-cyan-400 hover:text-cyan-300">Register with a staff code</a> or contact your system administrator.
               </p>
             </div>
           </div>

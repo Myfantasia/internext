@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { UserPlus, X } from 'lucide-react';
+import { UserPlus, X, Copy, KeyRound } from 'lucide-react';
 import { useToast } from '../../context/ToastContext';
 
 interface Invite {
@@ -12,11 +12,20 @@ interface Invite {
   createdAt?: string;
 }
 
+interface SignupCode {
+  id: string; email: string; role: string; expiresAt: string; consumedAt?: string | null; revokedAt?: string | null;
+}
+
 export const AdminStaff: React.FC = () => {
   const { showToast } = useToast();
   const [invites, setInvites] = useState<Invite[]>([]);
   const [email, setEmail] = useState('');
   const [sending, setSending] = useState(false);
+  const [codes, setCodes] = useState<SignupCode[]>([]);
+  const [codeEmail, setCodeEmail] = useState('');
+  const [codeRole, setCodeRole] = useState<'ADMIN' | 'SALES_MANAGER'>('SALES_MANAGER');
+  const [newCode, setNewCode] = useState('');
+  const [creatingCode, setCreatingCode] = useState(false);
 
   const load = () => {
     fetch('/api/admin/invites')
@@ -25,6 +34,35 @@ export const AdminStaff: React.FC = () => {
         if (data?.invites) setInvites(data.invites);
       })
       .catch(() => {});
+    fetch('/api/admin/invites/codes')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => { if (data?.codes) setCodes(data.codes); })
+      .catch(() => {});
+  };
+
+  const handleCreateCode = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setCreatingCode(true);
+    setNewCode('');
+    try {
+      const res = await fetch('/api/admin/invites/codes', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: codeEmail.trim(), role: codeRole })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setNewCode(data.code);
+        setCodeEmail('');
+        showToast('Single-use signup code generated.', 'success');
+        load();
+      } else showToast(data.message || 'Could not generate code', 'error');
+    } catch { showToast('Could not generate code', 'error'); }
+    finally { setCreatingCode(false); }
+  };
+
+  const handleRevokeCode = async (id: string) => {
+    const res = await fetch(`/api/admin/invites/codes/${id}`, { method: 'DELETE' });
+    if (res.ok) { showToast('Signup code revoked', 'success'); load(); }
   };
 
   useEffect(() => {
@@ -81,8 +119,28 @@ export const AdminStaff: React.FC = () => {
     <div className="space-y-6 animate-in fade-in duration-200">
       <div>
         <h2 className="text-xl font-bold text-white">Staff invites</h2>
-        <p className="text-xs text-slate-400">Invite sales managers. Admins can only be created from the server bootstrap script.</p>
+        <p className="text-xs text-slate-400">Invite sales managers or generate a one-time signup code for a specific staff email.</p>
       </div>
+
+      <section className="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-5 space-y-4">
+        <div className="flex items-center gap-2"><KeyRound className="w-4 h-4 text-cyan-400" /><h3 className="text-sm font-bold text-white">Staff signup code</h3></div>
+        <form onSubmit={handleCreateCode} className="grid grid-cols-1 sm:grid-cols-[1fr_auto_auto] gap-3">
+          <input type="email" value={codeEmail} onChange={(e) => setCodeEmail(e.target.value)} placeholder="staff@company.co.ke" required className="bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-xs text-white" />
+          <select value={codeRole} onChange={(e) => setCodeRole(e.target.value as 'ADMIN' | 'SALES_MANAGER')} className="bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-xs text-white">
+            <option value="SALES_MANAGER">Sales Manager</option><option value="ADMIN">Administrator</option>
+          </select>
+          <button disabled={creatingCode} className="px-4 py-2.5 bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold">{creatingCode ? 'Generating…' : 'Generate code'}</button>
+        </form>
+        {newCode && <div className="rounded-xl border border-emerald-700/50 bg-emerald-950/30 p-3 text-xs space-y-2">
+          <p className="text-emerald-300 font-semibold">Share this code with the invited person. It works once, only for their email, and expires in 24 hours.</p>
+          <div className="flex items-center gap-2"><code className="flex-1 rounded-lg bg-slate-950 px-3 py-2 font-mono text-sm tracking-wider text-white">{newCode}</code>
+            <button type="button" onClick={() => navigator.clipboard?.writeText(newCode)} className="p-2 rounded-lg bg-slate-800 text-slate-200" aria-label="Copy signup code"><Copy className="w-4 h-4" /></button>
+          </div>
+        </div>}
+        <div className="overflow-x-auto"><table className="w-full text-left text-xs"><thead className="text-slate-500"><tr><th className="py-2">Email</th><th>Role</th><th>Status</th><th>Expires</th><th /></tr></thead><tbody className="divide-y divide-slate-800">
+          {codes.map((code) => <tr key={code.id}><td className="py-2.5 text-slate-200">{code.email}</td><td className="text-slate-400">{code.role.replace('_', ' ')}</td><td className="text-slate-400">{code.revokedAt ? 'Revoked' : code.consumedAt ? 'Used' : new Date(code.expiresAt) < new Date() ? 'Expired' : 'Active'}</td><td className="text-slate-500">{new Date(code.expiresAt).toLocaleDateString()}</td><td className="text-right">{!code.revokedAt && !code.consumedAt && new Date(code.expiresAt) > new Date() && <button type="button" onClick={() => handleRevokeCode(code.id)} className="text-rose-400 hover:text-rose-300" aria-label="Revoke signup code"><X className="w-4 h-4" /></button>}</td></tr>)}
+        </tbody></table></div>
+      </section>
 
       <form onSubmit={handleInvite} className="bg-slate-900 border border-slate-800 rounded-2xl p-4 flex flex-col sm:flex-row gap-3">
         <input

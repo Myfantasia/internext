@@ -8,6 +8,13 @@
       "when": 1788861675606,
       "tag": "0000_unusual_jack_flag",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1790965529810,
+      "tag": "0001_shocking_gunslinger",
+      "breakpoints": true
     }
   ]
 }

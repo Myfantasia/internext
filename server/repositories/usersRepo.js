@@ -12,6 +12,7 @@ export const SAFE_USER_COLUMNS = {
   addresses: users.addresses,
   isActive: users.isActive,
   emailVerifiedAt: users.emailVerifiedAt,
+  referralCode: users.referralCode,
   createdAt: users.createdAt
 };
 
@@ -31,10 +32,15 @@ export async function findUserById(id) {
   return row || null;
 }
 
-export async function createUser({ name, email, phone, passwordHash, role = 'CUSTOMER' }) {
+export async function findUserByReferralCode(referralCode) {
+  const [row] = await db.select().from(users).where(eq(users.referralCode, referralCode.trim().toUpperCase())).limit(1);
+  return row || null;
+}
+
+export async function createUser({ name, email, phone, passwordHash, role = 'CUSTOMER', referredBy = null }) {
   const [row] = await db
     .insert(users)
-    .values({ name, email: email.toLowerCase(), phone, passwordHash, role })
+    .values({ name, email: email.toLowerCase(), phone, passwordHash, role, referredBy })
     .returning();
   return row;
 }
@@ -97,6 +103,27 @@ export async function clearFailedLogins(id) {
 export async function countAdmins() {
   const [row] = await db.select({ count: count() }).from(users).where(eq(users.role, 'ADMIN'));
   return row?.count ?? 0;
+}
+
+// Serializes initial setup so simultaneous no-code requests cannot both
+// become the first administrator.
+export async function createFirstAdminIfAbsent({ name, email, phone, passwordHash, referredBy }) {
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(73190542)`);
+    const [row] = await tx.select({ total: count() }).from(users).where(eq(users.role, 'ADMIN'));
+    if (Number(row?.total || 0) > 0) return null;
+    const [user] = await tx.insert(users).values({
+      name, email: email.toLowerCase(), phone, passwordHash, role: 'ADMIN', referredBy
+    }).returning();
+    return user;
+  });
+}
+
+export async function getReferralStats(userId) {
+  const [all] = await db.select({ total: count() }).from(users).where(eq(users.referredBy, userId));
+  const [verified] = await db.select({ total: count() }).from(users)
+    .where(sql`${users.referredBy} = ${userId} and ${users.emailVerifiedAt} is not null`);
+  return { totalReferrals: Number(all?.total || 0), verifiedReferrals: Number(verified?.total || 0) };
 }
 
 export async function listUsers({ role } = {}) {

@@ -13,7 +13,9 @@ import {
   Send,
   Trash2,
   CheckCircle2,
-  AlertCircle
+  AlertCircle,
+  Gift,
+  Copy
 } from 'lucide-react';
 import { Header } from '../components/layout/Header';
 import { Footer } from '../components/layout/Footer';
@@ -38,6 +40,7 @@ export const CustomerDashboardPage: React.FC = () => {
   const [profileName, setProfileName] = useState(user?.name || '');
   const [profilePhone, setProfilePhone] = useState(user?.phone || '');
   const [savingProfile, setSavingProfile] = useState(false);
+  const [referralSummary, setReferralSummary] = useState<{ referralCode: string; totalReferrals: number; verifiedReferrals: number; rewards: { couponCode: string; referralCount: number; usedCount: number; validUntil: string | null }[] } | null>(null);
 
   useEffect(() => {
     setProfileName(user?.name || '');
@@ -59,6 +62,8 @@ export const CustomerDashboardPage: React.FC = () => {
 
   useEffect(() => {
     if (user?.email) {
+      fetch('/api/auth/referrals').then((res) => res.ok ? res.json() : null)
+        .then((data) => { if (data?.success) setReferralSummary(data); }).catch(() => {});
       // Fetch customer orders — scoped server-side to the authenticated
       // session (server/routes/orderRoutes.js), the URL segment is ignored
       // for non-staff requesters.
@@ -465,6 +470,16 @@ export const CustomerDashboardPage: React.FC = () => {
             {activeTab === 'settings' && (
               <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8 space-y-5 text-xs animate-in fade-in duration-200">
                 <h3 className="text-base font-bold text-white">Account Settings & Security</h3>
+                {referralSummary && <section className="rounded-2xl border border-cyan-800/40 bg-cyan-950/20 p-4 space-y-3">
+                  <div className="flex items-center gap-2"><Gift className="w-4 h-4 text-cyan-400" /><h4 className="font-bold text-white">Your referral rewards</h4></div>
+                  <p className="text-slate-400">Share your code. Rewards are based on verified referrals.</p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <code className="rounded-lg bg-slate-950 border border-slate-800 px-3 py-2 font-mono text-sm tracking-wider text-cyan-300">{referralSummary.referralCode}</code>
+                    <button type="button" onClick={() => navigator.clipboard?.writeText(`${window.location.origin}/auth?ref=${referralSummary.referralCode}`)} className="inline-flex items-center gap-1.5 rounded-lg bg-slate-800 px-3 py-2 text-slate-200" aria-label="Copy referral link"><Copy className="w-3.5 h-3.5" /> Copy link</button>
+                    <span className="text-slate-400">{referralSummary.totalReferrals} joined · {referralSummary.verifiedReferrals} verified</span>
+                  </div>
+                  {referralSummary.rewards.length > 0 && <div className="space-y-1.5"><p className="font-semibold text-slate-300">Referral reward codes</p>{referralSummary.rewards.map((reward) => <div key={reward.couponCode} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-slate-950/70 px-3 py-2"><code className={`font-mono ${reward.usedCount ? 'text-slate-500 line-through' : 'text-emerald-300'}`}>{reward.couponCode}</code><span className="text-slate-500">{reward.usedCount ? 'Redeemed' : `Earned at ${reward.referralCount} verified referrals`}</span></div>)}</div>}
+                </section>}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
                     <label className="block text-slate-400 mb-1">Full Name:</label>

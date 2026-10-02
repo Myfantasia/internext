@@ -4,7 +4,30 @@ export const registerSchema = z.object({
   name: z.string().trim().min(2).max(120),
   email: z.string().trim().toLowerCase().email().max(200),
   phone: z.string().trim().max(30).optional(),
-  password: z.string().min(1).max(200) // strength re-checked explicitly with a user-facing message
+  password: z.string().min(1).max(200), // strength re-checked explicitly with a user-facing message
+  referralCode: z.string().trim().max(40).optional()
+});
+
+export const staffRegisterSchema = registerSchema.extend({
+  invitationCode: z.string().trim().max(100).optional()
+});
+
+export const staffCodeSchema = z.object({
+  email: z.string().trim().toLowerCase().email().max(200),
+  role: z.enum(['ADMIN', 'SALES_MANAGER'])
+});
+
+export const referralRewardSettingsSchema = z.object({
+  referralsRequired: z.coerce.number().int().min(1).max(1000),
+  discountType: z.enum(['percentage', 'fixed']),
+  discountValue: z.coerce.number().positive().max(1000000),
+  minOrderAmount: z.coerce.number().min(0).max(100000000).default(0),
+  maxDiscountAmount: z.coerce.number().positive().max(100000000).nullable().optional(),
+  isActive: z.boolean()
+}).superRefine((data, ctx) => {
+  if (data.discountType === 'percentage' && data.discountValue > 100) {
+    ctx.addIssue({ code: 'custom', path: ['discountValue'], message: 'Percentage discount cannot exceed 100.' });
+  }
 });
 
 export const loginSchema = z.object({

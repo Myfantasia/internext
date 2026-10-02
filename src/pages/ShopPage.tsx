@@ -469,7 +469,7 @@ export const ShopPage: React.FC = () => {
                 </button>
               </div>
             ) : (
-              <div className={viewLayout === 'grid' ? 'grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-6' : 'space-y-4'}>
+              <div className={viewLayout === 'grid' ? 'grid grid-cols-2 sm:grid-cols-2 xl:grid-cols-3 gap-3 sm:gap-5 xl:gap-6' : 'space-y-4'}>
                 {filteredProducts.map((product) => (
                   <ProductCard key={product.id} product={product} layout={viewLayout} />
                 ))}

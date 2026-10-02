@@ -93,7 +93,7 @@ export const HeroSlider: React.FC = () => {
       <div className="max-w-[1520px] mx-auto px-3 sm:px-4 lg:px-5 py-10 sm:py-16 lg:py-20 relative z-10">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12 items-center">
           {/* Left Content */}
-          <div className="lg:col-span-7 space-y-5 text-center lg:text-left">
+          <div key={slide.id} className="lg:col-span-7 space-y-5 text-center lg:text-left animate-fadeInUp">
             <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full border text-xs font-bold uppercase tracking-wider backdrop-blur-md transition-all duration-300">
               <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border ${slide.badgeColor}`}>
                 <Zap className="w-3 h-3 fill-current" /> {slide.badge}
@@ -156,9 +156,10 @@ export const HeroSlider: React.FC = () => {
               <div className="relative rounded-3xl overflow-hidden bg-gradient-to-tr from-slate-900 to-slate-800 border-2 border-slate-700/80 p-3 shadow-2xl shadow-cyan-950/40 group">
                 <div className="relative h-72 sm:h-96 rounded-2xl overflow-hidden bg-slate-950">
                   <img
+                    key={slide.id}
                     src={slide.image}
                     alt={slide.highlight}
-                    className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
+                    className="hero-slide-image w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
                   />
                   <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-transparent to-transparent opacity-60" />
 
@@ -196,6 +197,8 @@ export const HeroSlider: React.FC = () => {
                   currentSlide === idx ? 'w-8 bg-cyan-500' : 'w-2 bg-slate-700 hover:bg-slate-600'
                 }`}
                 title={`Go to slide ${idx + 1}`}
+                aria-label={`Go to slide ${idx + 1}`}
+                aria-current={currentSlide === idx ? 'true' : undefined}
               />
             ))}
           </div>
@@ -206,6 +209,7 @@ export const HeroSlider: React.FC = () => {
               onClick={() => setCurrentSlide((prev) => (prev - 1 + slides.length) % slides.length)}
               className="p-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-700 transition-colors"
               title="Previous Slide"
+              aria-label="Previous slide"
             >
               <ChevronLeft className="w-4 h-4" />
             </button>
@@ -214,6 +218,7 @@ export const HeroSlider: React.FC = () => {
               onClick={() => setCurrentSlide((prev) => (prev + 1) % slides.length)}
               className="p-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-700 transition-colors"
               title="Next Slide"
+              aria-label="Next slide"
             >
               <ChevronRight className="w-4 h-4" />
             </button>

@@ -31,15 +31,15 @@ export const FeaturedSection: React.FC = () => {
   const itemsToShow = displayedProducts.slice(0, 8);
 
   return (
-    <section className="py-12 sm:py-16 bg-slate-950 px-3 sm:px-4 lg:px-5">
+    <section className="py-14 sm:py-20 bg-slate-950 px-3 sm:px-4 lg:px-5">
       <div className="max-w-[1520px] mx-auto">
         {/* Header & Tabs */}
         <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 mb-8">
           <div>
-            <div className="text-xs font-extrabold text-cyan-400 uppercase tracking-wider mb-1">
+            <div className="text-[10px] font-extrabold text-cyan-400 uppercase tracking-[.2em] mb-2">
               Curated Electronics
             </div>
-            <h2 className="text-2xl sm:text-3xl font-black text-white tracking-tight">
+            <h2 className="text-2xl sm:text-4xl font-bold text-white tracking-tight">
               Featured Flagships & Gear
             </h2>
           </div>
@@ -70,7 +70,7 @@ export const FeaturedSection: React.FC = () => {
         </div>
 
         {/* Products Grid */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+        <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-5 lg:gap-6">
           {itemsToShow.map((product) => (
             <ProductCard key={product.id} product={product} />
           ))}

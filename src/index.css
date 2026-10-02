@@ -1,20 +1,6 @@
 @import "tailwindcss";
 
-/* ============================================================================
-   DESIGN TOKENS — light/dark theme system
-   ----------------------------------------------------------------------------
-   Rather than overriding hundreds of individual Tailwind utility selectors
-   with !important (the previous approach — brittle, and only covered the
-   specific opacity variants someone remembered to add), this redefines
-   Tailwind's own slate palette via CSS custom-property indirection. Every
-   bg-slate-*, text-slate-*, and border-slate-* utility anywhere in the app —
-   including opacity variants like bg-slate-900/60 — automatically becomes
-   theme-aware with no component changes required.
-   ThemeContext (src/context/ThemeContext.tsx) toggles the "dark"/"light"
-   class on <html>; :root supplies the dark (default) values, html.light
-   overrides them. Because <html> IS :root, html.light naturally wins on
-   specificity — no !important needed here.
-   ============================================================================ */
+/* A quiet, editorial palette that keeps the familiar slate utilities theme-aware. */
 @theme {
   --color-slate-950: var(--t-slate-950);
   --color-slate-900: var(--t-slate-900);
@@ -25,242 +11,133 @@
   --color-slate-300: var(--t-slate-300);
   --color-slate-200: var(--t-slate-200);
   --color-slate-100: var(--t-slate-100);
+  --color-cyan-50: var(--t-accent-50);
+  --color-cyan-100: var(--t-accent-100);
+  --color-cyan-200: var(--t-accent-200);
+  --color-cyan-300: var(--t-accent-300);
+  --color-cyan-400: var(--t-accent-400);
+  --color-cyan-500: var(--t-accent-500);
+  --color-cyan-600: var(--t-accent-600);
+  --color-cyan-700: var(--t-accent-700);
+  --color-cyan-800: var(--t-accent-800);
+  --color-cyan-900: var(--t-accent-900);
+  --color-cyan-950: var(--t-accent-950);
+  --color-blue-400: var(--t-accent-400);
+  --color-blue-500: var(--t-accent-500);
+  --color-blue-600: var(--t-accent-600);
+  --color-blue-700: var(--t-accent-700);
+  --color-sky-300: var(--t-accent-300);
+  --font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Space Grotesk", "Plus Jakarta Sans", ui-sans-serif, sans-serif;
 }
 
 :root {
-  /* Dark theme (default) */
-  --t-slate-950: #020617; /* page background */
-  --t-slate-900: #0f172a; /* card/surface background */
-  --t-slate-800: #1e293b; /* elevated surface / hover / borders */
-  --t-slate-700: #334155; /* secondary borders */
-  --t-slate-500: #64748b; /* subtle text */
-  --t-slate-400: #94a3b8; /* muted text */
-  --t-slate-300: #cbd5e1; /* secondary text */
-  --t-slate-200: #e2e8f0; /* tertiary text / faint borders */
-  --t-slate-100: #f1f5f9; /* body text on dark surfaces */
+  color-scheme: dark;
+  --t-slate-950: #101916;
+  --t-slate-900: #18231f;
+  --t-slate-800: #26342e;
+  --t-slate-700: #3b4a43;
+  --t-slate-500: #91a097;
+  --t-slate-400: #aab7af;
+  --t-slate-300: #c4cec7;
+  --t-slate-200: #dce4de;
+  --t-slate-100: #f1f5f1;
+  --t-page: #101916;
+  --t-surface: #18231f;
+  --t-border: rgba(196, 206, 199, .12);
+  --t-accent: #75b89b;
+  --t-accent-50: #eef8f1; --t-accent-100: #d6ede0; --t-accent-200: #b5dcc7;
+  --t-accent-300: #91c8ab; --t-accent-400: #75b89b; --t-accent-500: #5a9d7e;
+  --t-accent-600: #438264; --t-accent-700: #35674f; --t-accent-800: #2a4e3e;
+  --t-accent-900: #213d31; --t-accent-950: #142820;
 }
 
 html.light {
-  --t-slate-950: #f1f5f9; /* page background */
-  --t-slate-900: #ffffff; /* card/surface background */
-  --t-slate-800: #e2e8f0; /* elevated surface / hover / borders */
-  --t-slate-700: #e2e8f0; /* secondary borders */
-  --t-slate-500: #64748b; /* subtle text */
-  --t-slate-400: #64748b; /* muted text */
-  --t-slate-300: #334155; /* secondary text */
-  --t-slate-200: #334155; /* tertiary text / faint borders */
-  --t-slate-100: #0f172a; /* body text on light surfaces */
+  color-scheme: light;
+  --t-slate-950: #f5f4ef;
+  --t-slate-900: #fffefa;
+  --t-slate-800: #eeeee7;
+  --t-slate-700: #dedfd6;
+  --t-slate-500: #777f77;
+  --t-slate-400: #737b73;
+  --t-slate-300: #535d55;
+  --t-slate-200: #37423a;
+  --t-slate-100: #202a23;
+  --t-page: #f5f4ef;
+  --t-surface: #fffefa;
+  --t-border: rgba(42, 57, 46, .12);
+  --t-accent: #39765b;
+  --t-accent-50: #eff7f1; --t-accent-100: #e0eee4; --t-accent-200: #c2decb;
+  --t-accent-300: #83b597; --t-accent-400: #39765b; --t-accent-500: #367253;
+  --t-accent-600: #32694f; --t-accent-700: #285640; --t-accent-800: #214634;
+  --t-accent-900: #193729; --t-accent-950: #10271c;
 }
 
 @layer base {
+  html { scroll-behavior: smooth; }
   body {
-    @apply bg-slate-950 text-slate-100 antialiased font-sans selection:bg-cyan-600 selection:text-white transition-colors duration-200;
+    @apply bg-slate-950 text-slate-100 antialiased font-sans;
+    background-color: var(--t-page);
+    min-width: 320px;
+
   }
+  h1, h2, h3, h4 { font-family: var(--font-display); letter-spacing: -.035em; }
+  button, a, input, select, textarea { -webkit-tap-highlight-color: transparent; }
+  button { cursor: pointer; }
+  :focus-visible { outline: 2px solid var(--t-accent); outline-offset: 3px; }
 }
+::selection { background: var(--t-accent-600); color: #fff; }
 
-/* ============================================================================
-   REMAINING TARGETED OVERRIDES
-   ----------------------------------------------------------------------------
-   These can't be expressed as palette-token indirection because they're
-   either literal arbitrary-value colors (Tailwind bracket syntax compiles
-   those straight to a CSS literal, no variable involved) or because the
-   utility is used for two different jobs across the app (text-white as
-   "primary heading on the page background", which must flip with the theme,
-   vs. "label on a saturated colored button", which must stay white) — a
-   real distinction visible only at the component level, not the CSS level.
-   Scoping a full per-component pass to resolve that ambiguity is future
-   work; these targeted rules preserve the existing, working behavior for
-   the very common heading case in the meantime.
-   ============================================================================ */
-html.light body {
-  background-color: #f8fafc !important;
-  color: #0f172a !important;
+/* The palette is derived from the selected theme; product and admin screens share it. */
+html.light body { background-color: var(--t-page) !important; color: #202a23 !important; }
+html.light [class~="bg-[#070b18]"], html.light [class~="bg-[#0b132b]"] { background-color: #f0efe8 !important; }
+html.light .text-white { color: #202a23 !important; }
+html.light input, html.light select, html.light textarea {
+  background-color: #fffefa !important; border-color: #d7d9d0 !important; color: #202a23 !important;
 }
+html.light input::placeholder, html.light textarea::placeholder { color: #89918a !important; }
+html.light .bg-cyan-950, html.light [class*="bg-cyan-950/"] {
+  background-color: #e2eee7 !important; color: #32694f !important; border-color: #c5ddcf !important;
+}
+html.light .bg-emerald-950, html.light [class*="bg-emerald-950/"] {
+  background-color: #e2eee7 !important; color: #32694f !important; border-color: #c5ddcf !important;
+}
+html.light .bg-amber-950, html.light [class*="bg-amber-950/"] {
+  background-color: #f6efdc !important; color: #8a6521 !important; border-color: #eadcb9 !important;
+}
+html.light .bg-purple-950, html.light [class*="bg-purple-950/"] {
+  background-color: #eee7f1 !important; color: #704d7a !important; border-color: #ddcfe3 !important;
+}
+html.light .bg-rose-950, html.light [class*="bg-rose-950/"] {
+  background-color: #f7e8e6 !important; color: #a34540 !important; border-color: #edcfcb !important;
+}
+html.light button.bg-cyan-600, html.light button.bg-cyan-500, html.light a.bg-cyan-600, html.light a.bg-cyan-500,
+html.light button.bg-emerald-600, html.light button.bg-emerald-500, html.light a.bg-emerald-600,
+html.light button.bg-rose-600, html.light a.bg-rose-600, html.light button.bg-amber-600, html.light button.bg-amber-500,
+html.light a.bg-amber-600, html.light [class*="from-cyan"], html.light [class*="from-emerald"], html.light [class*="from-amber"] { color: white !important; }
+html.light select option { background-color: #fffefa; color: #202a23; }
 
-html.light .bg-\[\#070b18\],
-html.light .bg-\[\#0b132b\] {
-  background-color: #f1f5f9 !important;
-}
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: var(--t-page); }
+::-webkit-scrollbar-thumb { background: #78877c; border: 2px solid var(--t-page); border-radius: 999px; }
+::-webkit-scrollbar-thumb:hover { background: var(--t-accent); }
 
-html.light .text-white {
-  color: #0f172a !important;
-}
+button, a, .card-hover { transition: color .2s ease, background-color .2s ease, border-color .2s ease, box-shadow .25s ease, transform .25s ease; }
+.card-hover:hover { transform: translateY(-3px); box-shadow: 0 18px 42px rgba(15, 31, 22, .14); }
 
-html.light input,
-html.light select,
-html.light textarea {
-  background-color: #ffffff !important;
-  border-color: #cbd5e1 !important;
-  color: #0f172a !important;
-}
+@keyframes fadeInUp { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes softZoom { from { transform: scale(1.025); } to { transform: scale(1.08); } }
+@keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
+.animate-fadeInUp { animation: fadeInUp .45s cubic-bezier(.2,.7,.2,1) both; }
+.hero-slide-image { animation: softZoom 7s ease-out both; }
+.skeleton { background: linear-gradient(90deg, var(--t-slate-800) 25%, var(--t-slate-700) 50%, var(--t-slate-800) 75%); background-size: 200% 100%; animation: shimmer 1.5s infinite; }
+.scrollbar-none::-webkit-scrollbar { display: none; }
+.scrollbar-none { -ms-overflow-style: none; scrollbar-width: none; }
 
-html.light input::placeholder,
-html.light textarea::placeholder {
-  color: #94a3b8 !important;
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }
-
-/* Badge/pill accent colors (cyan/emerald/amber/purple/rose -950 backgrounds)
-   need their own light-mode pastel mapping since a "near-black tinted"
-   -950 shade would be nearly invisible without remapping. */
-html.light .bg-cyan-950,
-html.light .bg-cyan-950\/80,
-html.light .bg-cyan-950\/60,
-html.light .bg-cyan-950\/50,
-html.light .bg-cyan-950\/40 {
-  background-color: #e0f2fe !important;
-  color: #0369a1 !important;
-  border-color: #bae6fd !important;
-}
-
-html.light .bg-emerald-950,
-html.light .bg-emerald-950\/80,
-html.light .bg-emerald-950\/60,
-html.light .bg-emerald-950\/40 {
-  background-color: #d1fae5 !important;
-  color: #047857 !important;
-  border-color: #a7f3d0 !important;
-}
-
-html.light .bg-amber-950,
-html.light .bg-amber-950\/80,
-html.light .bg-amber-950\/60,
-html.light .bg-amber-950\/40 {
-  background-color: #fef3c7 !important;
-  color: #b45309 !important;
-  border-color: #fde68a !important;
-}
-
-html.light .bg-purple-950,
-html.light .bg-purple-950\/80,
-html.light .bg-purple-950\/60 {
-  background-color: #f3e8ff !important;
-  color: #7e22ce !important;
-  border-color: #e9d5ff !important;
-}
-
-html.light .bg-rose-950,
-html.light .bg-rose-950\/80,
-html.light .bg-rose-950\/60 {
-  background-color: #ffe4e6 !important;
-  color: #be123c !important;
-  border-color: #fecdd3 !important;
-}
-
-/* Custom scrollbar */
-::-webkit-scrollbar {
-  width: 7px;
-  height: 7px;
-}
-::-webkit-scrollbar-track {
-  background: #0b132b;
-}
-html.light ::-webkit-scrollbar-track {
-  background: #f1f5f9;
-}
-::-webkit-scrollbar-thumb {
-  background: #1e293b;
-  border-radius: 4px;
-}
-html.light ::-webkit-scrollbar-thumb {
-  background: #cbd5e1;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: #0284c7;
-}
-
-/* ── Input focus glow ─────────────────────────────────────────────────── */
-input:focus,
-select:focus,
-textarea:focus {
-  box-shadow: 0 0 0 3px rgba(6, 182, 212, 0.15);
-}
-
-/* ── Button transitions ────────────────────────────────────────────────── */
-button {
-  transition: all 0.15s ease;
-}
-
-/* ── Card hover lift utility ───────────────────────────────────────────── */
-.card-hover {
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
-}
-.card-hover:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
-}
-
-/* ── Fade-in-up animation ──────────────────────────────────────────────── */
-@keyframes fadeInUp {
-  from { opacity: 0; transform: translateY(12px); }
-  to   { opacity: 1; transform: translateY(0); }
-}
-.animate-fadeInUp {
-  animation: fadeInUp 0.25s ease forwards;
-}
-
-/* ── Skeleton loader shimmer ───────────────────────────────────────────── */
-@keyframes shimmer {
-  0%   { background-position: -200% 0; }
-  100% { background-position:  200% 0; }
-}
-.skeleton {
-  background: linear-gradient(
-    90deg,
-    var(--t-slate-800) 25%,
-    var(--t-slate-700) 50%,
-    var(--t-slate-800) 75%
-  );
-  background-size: 200% 100%;
-  animation: shimmer 1.5s infinite;
-}
-
-/* ── Typography defaults ───────────────────────────────────────────────── */
-h1, h2, h3 { letter-spacing: -0.025em; }
-
-/* ── Light mode: keep colored buttons with white text ─────────────────── */
-html.light button.bg-cyan-600,
-html.light button.bg-cyan-500,
-html.light a.bg-cyan-600,
-html.light a.bg-cyan-500,
-html.light button.bg-emerald-600,
-html.light button.bg-emerald-500,
-html.light a.bg-emerald-600,
-html.light button.bg-rose-600,
-html.light a.bg-rose-600,
-html.light button.bg-amber-600,
-html.light button.bg-amber-500,
-html.light a.bg-amber-600 {
-  color: white !important;
-}
-
-/* ── Light mode: select dropdown options ───────────────────────────────── */
-html.light select option {
-  background-color: #ffffff !important;
-  color: #0f172a !important;
-}
-
-/* ── Light mode: gradient buttons keep white text ──────────────────────── */
-html.light [class*="from-cyan"],
-html.light [class*="from-emerald"],
-html.light [class*="from-amber"] {
-  color: white !important;
-}
-
-/* ── Scrollbar: hide on specific elements ──────────────────────────────── */
-.scrollbar-none::-webkit-scrollbar {
-  display: none;
-}
-.scrollbar-none {
-  -ms-overflow-style: none;
-  scrollbar-width: none;
-}
-
 @media print {
-  body {
-    background: white !important;
-    color: black !important;
-  }
-  header, footer, aside, .print\:hidden {
-    display: none !important;
-  }
+  body { background: white !important; color: black !important; }
+  header, footer, button, .no-print { display: none !important; }
 }

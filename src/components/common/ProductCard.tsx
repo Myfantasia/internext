@@ -40,13 +40,13 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product, layout = 'gri
 
   if (layout === 'list') {
     return (
-      <div className="bg-slate-900/90 border border-slate-800 hover:border-slate-700 rounded-2xl p-4 sm:p-5 flex flex-col md:flex-row gap-5 transition-all duration-200 hover:shadow-xl hover:shadow-cyan-950/20 group">
+    <div className="bg-slate-900 border border-slate-800 hover:border-emerald-700/40 rounded-3xl p-4 sm:p-5 flex flex-col md:flex-row gap-5 transition-all duration-300 hover:shadow-xl hover:shadow-emerald-950/20 group">
         {/* Thumbnail */}
-        <div className="relative w-full md:w-56 h-48 md:h-auto rounded-xl overflow-hidden bg-slate-950 shrink-0 border border-slate-800">
+        <div className="relative w-full md:w-56 h-48 md:h-auto min-h-44 rounded-2xl overflow-hidden bg-slate-950 shrink-0 border border-slate-800">
           <img
             src={product.thumbnail}
             alt={product.name}
-            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700 ease-out"
           />
           {discountPercent > 0 && (
             <span className="absolute top-2.5 left-2.5 px-2 py-0.5 rounded-md bg-rose-600 text-white font-extrabold text-[11px] tracking-wider shadow">
@@ -159,7 +159,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product, layout = 'gri
 
   // Default Grid Layout
   return (
-    <div className="bg-slate-900/90 border border-slate-800 hover:border-cyan-500/40 rounded-2xl p-4 flex flex-col justify-between transition-all duration-200 hover:shadow-2xl hover:shadow-cyan-950/30 group relative">
+    <div className="bg-slate-900 border border-slate-800/90 hover:border-emerald-700/35 rounded-3xl p-3.5 sm:p-4 flex flex-col justify-between transition-all duration-300 hover:-translate-y-1 hover:shadow-2xl hover:shadow-emerald-950/15 group relative overflow-hidden">
       {/* Top badges */}
       <div className="flex items-center justify-between gap-1 mb-2.5">
         <div className="flex items-center gap-1.5 flex-wrap">
@@ -185,7 +185,9 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product, layout = 'gri
           <button
             type="button"
             onClick={() => toggleWishlist(product)}
-            className={`p-1.5 rounded-lg transition-colors ${
+            aria-label={isSaved ? 'Remove from wishlist' : 'Save to wishlist'}
+            aria-pressed={isSaved}
+            className={`p-2 rounded-xl transition-colors ${
               isSaved ? 'text-rose-500 bg-rose-950/60' : 'text-slate-400 hover:text-rose-400 hover:bg-slate-800'
             }`}
             title="Save to Wishlist"
@@ -195,7 +197,9 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product, layout = 'gri
           <button
             type="button"
             onClick={() => addToCompare(product)}
-            className={`p-1.5 rounded-lg transition-colors ${
+            aria-label={isCompared ? 'Remove from compare' : 'Add to compare'}
+            aria-pressed={isCompared}
+            className={`p-2 rounded-xl transition-colors ${
               isCompared ? 'text-cyan-400 bg-cyan-950/60' : 'text-slate-400 hover:text-cyan-400 hover:bg-slate-800'
             }`}
             title="Add to Compare"
@@ -205,7 +209,8 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product, layout = 'gri
           <button
             type="button"
             onClick={() => setIsQuickViewOpen(true)}
-            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+            aria-label="Quick view"
+            className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
             title="Quick View"
           >
             <Eye className="w-4 h-4" />
@@ -214,11 +219,11 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product, layout = 'gri
       </div>
 
       {/* Product Image */}
-      <a href={`/products/${product.slug}`} className="block relative w-full h-48 rounded-xl overflow-hidden bg-slate-950 mb-3 border border-slate-800">
+      <a href={`/products/${product.slug}`} className="block relative w-full aspect-[4/3] rounded-2xl overflow-hidden bg-slate-950 mb-4 border border-slate-800/80">
         <img
           src={product.thumbnail}
           alt={product.name}
-          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700 ease-out"
           loading="lazy"
         />
       </a>
@@ -226,17 +231,17 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product, layout = 'gri
       {/* Brand & Title */}
       <div className="flex-1 flex flex-col justify-between">
         <div>
-          <div className="text-[11px] font-bold text-cyan-400 uppercase tracking-wider mb-1">
+          <div className="text-[10px] font-extrabold text-cyan-400 uppercase tracking-[.16em] mb-1.5">
             {product.brand}
           </div>
           <a href={`/products/${product.slug}`}>
-            <h3 className="text-sm font-bold text-white group-hover:text-cyan-300 transition-colors line-clamp-2 leading-snug">
+            <h3 className="text-[15px] font-bold text-white group-hover:text-cyan-300 transition-colors line-clamp-2 leading-snug min-h-[2.7rem]">
               {product.name}
             </h3>
           </a>
 
           {/* Short Specs Pill */}
-          <div className="mt-2 text-[11px] text-slate-400 line-clamp-1 bg-slate-950/60 px-2 py-1 rounded-md border border-slate-800/80 font-mono">
+          <div className="mt-2.5 text-[10px] text-slate-400 line-clamp-1 bg-slate-950/50 px-2.5 py-1.5 rounded-lg border border-slate-800/70">
             {product.shortSpecs || product.description}
           </div>
 
@@ -258,7 +263,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product, layout = 'gri
         </div>
 
         {/* Pricing & Add to Cart */}
-        <div className="pt-3 border-t border-slate-800/80 mt-3 flex items-center justify-between gap-2">
+        <div className="pt-3.5 border-t border-slate-800/80 mt-3.5 flex items-center justify-between gap-2">
           <div>
             <div className="text-base font-extrabold text-white">
               {formatPrice(product.price)}

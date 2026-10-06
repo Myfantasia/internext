@@ -3,8 +3,10 @@ import { companyProfile, deliveryZones, stores } from '../db/schema.js';
 import { eq } from 'drizzle-orm';
 
 // Singleton-style table — there is exactly one active row.
-export async function getCompanyProfile() {
-  const [row] = await db.select().from(companyProfile).limit(1);
+// Pass the transaction when calling from inside one: on Vercel the pool has a
+// single connection, so reaching for `db` mid-transaction waits forever.
+export async function getCompanyProfile(database = db) {
+  const [row] = await database.select().from(companyProfile).limit(1);
   return row || null;
 }
 

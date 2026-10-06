@@ -8,7 +8,7 @@ import { createReceiptForPayment } from './receiptsRepo.js';
 import { getCompanyProfile } from './companyProfileRepo.js';
 import { isUuid } from '../db/util.js';
 import { getLiveFlashDeals, priceLine, computeTax, roundMoney } from '../services/pricing.js';
-import { quoteDelivery } from '../services/delivery.js';
+import { quoteDelivery, getDeliveryConfig } from '../services/delivery.js';
 import { evaluateCoupon, reserveCoupon, redeemCouponForOrder, releaseCouponForOrder } from '../services/coupons.js';
 
 // Postgres errors on `uuid_col = $1` when $1 isn't a valid UUID, even in an
@@ -183,14 +183,14 @@ export async function priceCart(tx, { userId, couponCode, delivery, lockCoupon =
   let deliveryError = null;
   if (delivery) {
     try {
-      deliveryQuote = await quoteDelivery(delivery, subtotal - discountAmount);
+      deliveryQuote = await quoteDelivery(delivery, subtotal - discountAmount, await getDeliveryConfig({ database: tx }));
     } catch (err) {
       if (!err.code) throw err;
       deliveryError = { message: err.message, code: err.code };
     }
   }
 
-  const profile = await getCompanyProfile();
+  const profile = await getCompanyProfile(tx);
   const taxRate = Number(profile?.taxRate ?? 16);
   const pricesIncludeTax = profile?.pricesIncludeTax ?? true;
   const taxable = Math.max(0, roundMoney(subtotal - discountAmount));
@@ -217,7 +217,7 @@ export async function priceCart(tx, { userId, couponCode, delivery, lockCoupon =
 // Pay on delivery is only offered where it can be relied on: a value cap set in
 // Settings, and one open pay-on-delivery order per customer at a time.
 async function cashOnDeliveryProblem(tx, { userId, total }) {
-  const company = await getCompanyProfile();
+  const company = await getCompanyProfile(tx);
   const cap = company?.codMaxOrderAmount != null ? Number(company.codMaxOrderAmount) : null;
   if (cap && total > cap) {
     return `Pay on delivery is available for orders up to KES ${cap.toLocaleString('en-KE')}. Please pay by M-Pesa, card or bank transfer.`;

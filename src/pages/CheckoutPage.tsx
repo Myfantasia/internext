@@ -64,6 +64,8 @@ export const CheckoutPage: React.FC = () => {
 
   const [options, setOptions] = useState<DeliveryOption[]>([]);
   const [summary, setSummary] = useState<Summary | null>(null);
+  // Why the server could not price the cart (e.g. empty cart, unavailable item).
+  const [summaryError, setSummaryError] = useState<string | null>(null);
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [codMaxKm, setCodMaxKm] = useState(40);
   const [providers, setProviders] = useState<{ mpesa: boolean; card: boolean; cardTest?: boolean; mpesaMode?: string | null }>({ mpesa: true, card: true });
@@ -105,13 +107,19 @@ export const CheckoutPage: React.FC = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ couponCode: appliedCoupon?.code || null, delivery: hasDeliveryInput ? deliveryRequest : null })
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => null);
       if (seq !== previewSeq.current) return;
       if (data?.success) {
         setSummary(data.summary);
+        setSummaryError(null);
         setCodMaxKm(data.cashOnDeliveryMaxKm ?? 40);
+      } else {
+        setSummaryError(data?.message || `We couldn't price your order (error ${res.status}). Please refresh the page.`);
+        if (res.status !== 429) console.error('[checkout] preview failed', res.status, data);
       }
-    } catch { /* keep last summary */ } finally {
+    } catch {
+      if (seq === previewSeq.current) setSummaryError('Could not reach the server to price your order. Check your connection and try again.');
+    } finally {
       if (seq === previewSeq.current) setSummaryLoading(false);
     }
   }, [deliveryRequest, appliedCoupon?.code]);
@@ -150,6 +158,7 @@ export const CheckoutPage: React.FC = () => {
         if (!location.addressLine || location.addressLine.trim().length < 2) e.addressLine = 'Enter your street or road';
       }
       if (summary?.deliveryError) e.delivery = summary.deliveryError.message;
+      else if (summaryError) e.delivery = summaryError;
       else if (!quote) e.delivery = 'Choose how you would like to receive your order';
     }
     if (s === 2 && !methodAvailable(paymentMethod)) e.payment = 'Choose an available payment method';

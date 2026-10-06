@@ -33,11 +33,12 @@ export function toApiOption(z) {
   };
 }
 
-export async function getDeliveryConfig({ includeInactive = false } = {}) {
+// `database` is the open transaction when priced inside one (see getCompanyProfile).
+export async function getDeliveryConfig({ includeInactive = false, database = db } = {}) {
   const [profile, bands, options] = await Promise.all([
-    getCompanyProfile(),
-    db.select().from(deliveryRateBands).orderBy(asc(deliveryRateBands.minKm)),
-    db.select().from(deliveryZones).orderBy(asc(deliveryZones.sortOrder), asc(deliveryZones.name))
+    getCompanyProfile(database),
+    database.select().from(deliveryRateBands).orderBy(asc(deliveryRateBands.minKm)),
+    database.select().from(deliveryZones).orderBy(asc(deliveryZones.sortOrder), asc(deliveryZones.name))
   ]);
   return {
     office: profile?.officeLat != null && profile?.officeLng != null

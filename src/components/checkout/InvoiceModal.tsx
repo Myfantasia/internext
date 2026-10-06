@@ -2,6 +2,7 @@ import React from 'react';
 import { Printer, Download, X, Zap, CheckCircle2, ReceiptText } from 'lucide-react';
 import { Order } from '../../types';
 import { useStore } from '../../context/StoreContext';
+import { Portal, useBodyScrollLock, useEscapeKey } from '../common/Overlay';
 
 interface InvoiceModalProps {
   order: Order;
@@ -10,13 +11,19 @@ interface InvoiceModalProps {
 
 export const InvoiceModal: React.FC<InvoiceModalProps> = ({ order, onClose }) => {
   const { formatPrice, settings } = useStore();
+  useBodyScrollLock();
+  useEscapeKey(onClose);
+  const isPickup = !!(order.deliveryAddress?.pickup || order.deliveryQuote?.kind === 'pickup');
+  const unpaid = order.paymentStatus !== 'Paid' && order.status !== 'Cancelled';
+  const isBank = order.paymentMethod?.startsWith('Bank Transfer');
 
   const handlePrint = () => {
     window.print();
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md animate-in fade-in duration-200 overflow-y-auto">
+    <Portal>
+    <div className="print-overlay fixed inset-0 z-[60] flex items-start sm:items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md animate-in fade-in duration-200 overflow-y-auto overscroll-contain">
       <div className="bg-white text-slate-900 rounded-3xl max-w-2xl w-full p-6 sm:p-8 shadow-2xl relative my-8 print:m-0 print:p-0 print:shadow-none print:w-full print:max-w-none">
         {/* Top Action Bar (hidden on print) */}
         <div className="flex items-center justify-between pb-6 border-b border-slate-200 print:hidden">
@@ -127,6 +134,21 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = ({ order, onClose }) =>
                     </td>
                   </tr>
                 ))}
+                {/* Delivery is billed as its own line. */}
+                <tr>
+                  <td className="p-3">
+                    <div className="font-bold text-slate-900">{isPickup ? 'Store pickup' : `Delivery — ${order.deliveryMethod || 'Courier'}`}</div>
+                    <div className="text-[11px] text-slate-500">
+                      {isPickup ? 'Collect from our store with your order number.' : [
+                        order.deliveryDistanceKm != null ? `Approx. ${order.deliveryDistanceKm} km from our office${order.deliveryQuote?.estimated ? ' (estimate)' : ''}` : null,
+                        [order.deliveryAddress.town, order.deliveryAddress.county].filter(Boolean).join(', ') || null
+                      ].filter(Boolean).join(' · ')}
+                    </div>
+                  </td>
+                  <td className="p-3 text-center font-bold text-slate-800">1</td>
+                  <td className="p-3 text-right text-slate-700">{order.deliveryFee > 0 ? formatPrice(order.deliveryFee) : 'Free'}</td>
+                  <td className="p-3 text-right font-black text-slate-900">{order.deliveryFee > 0 ? formatPrice(order.deliveryFee) : 'Free'}</td>
+                </tr>
               </tbody>
             </table>
           </div>
@@ -135,7 +157,7 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = ({ order, onClose }) =>
           <div className="flex justify-end">
             <div className="w-64 space-y-1.5 text-xs text-slate-600">
               <div className="flex justify-between">
-                <span>Subtotal:</span>
+                <span>Items subtotal:</span>
                 <span className="font-bold text-slate-900">{formatPrice(order.subtotal)}</span>
               </div>
               {order.discountAmount > 0 && (
@@ -161,6 +183,28 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = ({ order, onClose }) =>
             </div>
           </div>
 
+          {/* How to pay (unpaid offline orders) */}
+          {unpaid && isBank && (
+            <div className="p-4 rounded-2xl border border-amber-300 bg-amber-50 text-[11px] text-slate-700 space-y-1">
+              <div className="text-[10px] font-bold text-amber-700 uppercase tracking-wider">How to pay — bank transfer</div>
+              {settings.bankAccountNumber ? (
+                <>
+                  {settings.bankName && <div>Bank: <strong>{settings.bankName}{settings.bankBranch ? `, ${settings.bankBranch}` : ''}</strong></div>}
+                  <div>Account name: <strong>{settings.bankAccountName || settings.storeName}</strong></div>
+                  <div>Account number: <strong className="font-mono">{settings.bankAccountNumber}</strong>{settings.bankSwiftCode && <> · SWIFT <strong className="font-mono">{settings.bankSwiftCode}</strong></>}</div>
+                </>
+              ) : <div>Call {settings.phone} for our bank details.</div>}
+              <div>Reference: <strong className="font-mono">{order.orderNumber}</strong> · Amount: <strong>{formatPrice(order.total)}</strong></div>
+              <div>After paying, open your order and tap “I've paid” to send us the transaction reference.</div>
+            </div>
+          )}
+          {unpaid && order.paymentMethod === 'Cash on Delivery' && (
+            <div className="p-4 rounded-2xl border border-amber-300 bg-amber-50 text-[11px] text-slate-700">
+              <div className="text-[10px] font-bold text-amber-700 uppercase tracking-wider mb-1">Pay on delivery</div>
+              Amount to pay on {isPickup ? 'collection' : 'delivery'}: <strong>{formatPrice(order.total)}</strong> — cash, M-Pesa or card.
+            </div>
+          )}
+
           {/* Footer Note */}
           <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 text-[11px] text-slate-500 space-y-1 text-center">
             <p className="font-bold text-slate-800">Thank you for choosing {settings.storeName}!</p>
@@ -169,5 +213,6 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = ({ order, onClose }) =>
         </div>
       </div>
     </div>
+    </Portal>
   );
 };

@@ -17,6 +17,77 @@ import { InvoiceModal } from '../../components/checkout/InvoiceModal';
 import { useStore } from '../../context/StoreContext';
 import { useToast } from '../../context/ToastContext';
 import { Order } from '../../types';
+import { api, Modal, Field, kes } from './adminUi';
+
+const ORDER_STATUSES = ['Pending', 'Payment Pending', 'Processing', 'Packed', 'Dispatched', 'Out for Delivery', 'Delivered', 'Cancelled', 'Returned', 'Refunded'];
+
+const METHODS = [
+  { id: 'cash', label: 'Cash', needsRef: false },
+  { id: 'mpesa', label: 'M-Pesa (till / paybill)', needsRef: true },
+  { id: 'card', label: 'Card (POS machine)', needsRef: true },
+  { id: 'bank', label: 'Bank deposit / transfer', needsRef: true }
+];
+
+// Records money taken in person (pay on delivery, counter, or a bank deposit
+// seen on the statement). The server confirms it once and issues the receipt.
+const RecordPaymentModal: React.FC<{ order: Order; onClose: () => void; onDone: () => void }> = ({ order, onClose, onDone }) => {
+  const { showToast } = useToast();
+  const isBank = order.paymentMethod === 'Bank Transfer / RTGS';
+  const [method, setMethod] = useState(isBank ? 'bank' : 'cash');
+  const [amount, setAmount] = useState(String(order.total));
+  const [reference, setReference] = useState('');
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+  const needsRef = METHODS.find((m) => m.id === method)?.needsRef;
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (needsRef && !reference.trim()) { showToast('Enter the transaction reference', 'error'); return; }
+    setBusy(true);
+    try {
+      await api(`/api/payments/orders/${order.id}/record`, { method: 'POST', body: { method, amount: Number(amount), reference: reference.trim() || undefined, note: note.trim() || undefined } });
+      showToast(`Payment recorded for ${order.orderNumber}. Receipt issued and emailed.`, 'success');
+      onDone();
+    } catch (err: any) {
+      showToast(err.message, 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal
+      size="medium"
+      title={`Record payment · ${order.orderNumber}`}
+      description={`${order.customer.name} · ${order.paymentMethod} · total ${kes(order.total)}`}
+      onClose={onClose}
+      footer={<>
+        <button type="button" onClick={onClose} className="btn btn-secondary">Cancel</button>
+        <button type="submit" form="record-payment" disabled={busy} className="btn btn-primary">{busy ? 'Recording…' : 'Record payment & issue receipt'}</button>
+      </>}
+    >
+      <form id="record-payment" onSubmit={submit} className="space-y-4">
+        <Field label="How was it paid?" htmlFor="rp-method" required>
+          <select id="rp-method" value={method} onChange={(e) => setMethod(e.target.value)} className="field-input">
+            {METHODS.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+          </select>
+        </Field>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <Field label="Amount received (KES)" htmlFor="rp-amount" required hint="Must cover the full order total.">
+            <input id="rp-amount" type="number" min="1" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} className="field-input" required />
+          </Field>
+          <Field label={needsRef ? 'Transaction reference' : 'Reference (optional)'} htmlFor="rp-ref" required={needsRef} hint={method === 'mpesa' ? 'The M-Pesa code, e.g. SJK3H2L9QX' : method === 'card' ? 'POS slip / approval code' : method === 'bank' ? 'Reference on the bank statement' : 'Leave empty for cash'}>
+            <input id="rp-ref" value={reference} onChange={(e) => setReference(e.target.value.toUpperCase())} className="field-input font-mono" maxLength={60} />
+          </Field>
+        </div>
+        <Field label="Note (optional)" htmlFor="rp-note">
+          <input id="rp-note" value={note} onChange={(e) => setNote(e.target.value)} className="field-input" maxLength={300} placeholder="e.g. Collected by rider Peter at the door" />
+        </Field>
+        {isBank && <p className="callout callout-info">If the customer reported this transfer, approve it under Payments → Bank transfers to verify instead.</p>}
+      </form>
+    </Modal>
+  );
+};
 
 export const AdminOrders: React.FC = () => {
   const { formatPrice } = useStore();
@@ -27,75 +98,17 @@ export const AdminOrders: React.FC = () => {
   const [filterStatus, setFilterStatus] = useState<string>('All');
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [selectedInvoiceOrder, setSelectedInvoiceOrder] = useState<Order | null>(null);
-
-  const defaultDemoOrders: Order[] = [
-    {
-      id: 'ord-101',
-      orderNumber: 'NX-892401',
-      customer: {
-        name: 'Dennis Mwangi',
-        email: 'dennis.mwangi@gmail.com',
-        phone: '+254 759 508 348'
-      },
-      items: [
-        {
-          productId: 'prod-iphone16promax',
-          name: 'Apple iPhone 16 Pro Max 256GB Desert Titanium',
-          thumbnail: 'https://images.unsplash.com/photo-1695048133142-1a20484d2569?w=500&auto=format&fit=crop&q=80',
-          sku: 'APL-IPH16PM-256-DES',
-          price: 215000,
-          quantity: 1
-        }
-      ],
-      subtotal: 215000,
-      discountAmount: 0,
-      deliveryFee: 350,
-      taxAmount: 29655,
-      total: 215350,
-      currency: 'KES',
-      status: 'Dispatched',
-      paymentMethod: 'M-Pesa STK Push',
-      paymentStatus: 'Paid',
-      deliveryMethod: 'Express Courier',
-      deliveryAddress: {
-        county: 'Nairobi',
-        town: 'Kilimani',
-        street: 'Argwings Kodhek Road'
-      },
-      trackingNumber: 'NEX-TRK-98214',
-      timeline: [],
-      createdAt: new Date().toISOString()
-    }
-  ];
+  const [payingOrder, setPayingOrder] = useState<Order | null>(null);
 
   const fetchOrders = () => {
     setLoading(true);
     fetch('/api/orders')
-      .then((res) => {
-        if (!res.ok) return null;
-        const ct = res.headers.get('content-type');
-        return ct && ct.includes('application/json') ? res.json() : null;
-      })
+      .then((res) => res.json())
       .then((data) => {
-        if (data && data.orders && data.orders.length > 0) {
-          setOrders(data.orders);
-        } else {
-          try {
-            const saved = JSON.parse(localStorage.getItem('nexus_orders') || '[]');
-            setOrders(saved.length > 0 ? saved : defaultDemoOrders);
-          } catch {
-            setOrders(defaultDemoOrders);
-          }
-        }
+        if (data?.success) setOrders(data.orders || []);
+        else showToast(data?.message || 'Could not load orders', 'error');
       })
-      .catch(() => {
-        try {
-          const saved = JSON.parse(localStorage.getItem('nexus_orders') || '[]');
-          setOrders(saved.length > 0 ? saved : defaultDemoOrders);
-        } catch {
-          setOrders(defaultDemoOrders);
-        }
-      })
+      .catch(() => showToast('Could not reach the server to load orders', 'error'))
       .finally(() => setLoading(false));
   };
 
@@ -116,29 +129,12 @@ export const AdminOrders: React.FC = () => {
       const data = await res.json();
       if (data.success) {
         showToast(`Order status updated to ${newStatus}`, 'success');
-        fetchOrders();
+      } else {
+        showToast(data.message || 'Could not update the status', 'error');
       }
+      fetchOrders();
     } catch (e) {
       showToast('Error updating status', 'error');
-    }
-  };
-
-  const handleVerifyMpesa = async (orderId: string) => {
-    try {
-      const res = await fetch(`/api/orders/${orderId}/mpesa-verify`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          mpesaReceipt: `QKD${Date.now().toString().slice(-6)}XLP`
-        })
-      });
-      const data = await res.json();
-      if (data.success) {
-        showToast('M-Pesa payment marked as verified!', 'success');
-        fetchOrders();
-      }
-    } catch (e) {
-      showToast('Error verifying payment', 'error');
     }
   };
 
@@ -175,7 +171,7 @@ export const AdminOrders: React.FC = () => {
       {/* Filter Tabs & Search */}
       <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 p-4 bg-slate-900 border border-slate-800 rounded-2xl">
         <div className="flex items-center gap-1.5 overflow-x-auto text-xs pb-1 sm:pb-0">
-          {['All', 'Processing', 'Packed', 'Dispatched', 'Out for Delivery', 'Delivered'].map((st) => (
+          {['All', 'Payment Pending', 'Processing', 'Packed', 'Dispatched', 'Out for Delivery', 'Delivered', 'Cancelled'].map((st) => (
             <button
               key={st}
               type="button"
@@ -250,13 +246,13 @@ export const AdminOrders: React.FC = () => {
                       {ord.paymentReference && (
                         <div className="text-[10px] text-slate-400 font-mono">Ref: {ord.paymentReference}</div>
                       )}
-                      {ord.paymentStatus !== 'Paid' && (
+                      {ord.paymentStatus !== 'Paid' && ord.status !== 'Cancelled' && (
                         <button
                           type="button"
-                          onClick={() => handleVerifyMpesa(ord.id)}
+                          onClick={() => setPayingOrder(ord)}
                           className="block text-[10px] text-emerald-400 hover:underline font-bold"
                         >
-                          + Mark M-Pesa Paid
+                          + Record payment
                         </button>
                       )}
                     </div>
@@ -268,12 +264,11 @@ export const AdminOrders: React.FC = () => {
                       onChange={(e) => handleUpdateStatus(ord.id, e.target.value)}
                       className="bg-slate-950 border border-slate-700 rounded-xl px-2.5 py-1 text-xs text-white font-bold cursor-pointer focus:border-cyan-500"
                     >
-                      <option value="Processing">Processing</option>
-                      <option value="Packed">Packed</option>
-                      <option value="Dispatched">Dispatched</option>
-                      <option value="Out for Delivery">Out for Delivery</option>
-                      <option value="Delivered">Delivered</option>
+                      {ORDER_STATUSES.map((st) => <option key={st} value={st}>{st}</option>)}
                     </select>
+                    {ord.paymentMethod === 'Bank Transfer / RTGS' && ord.paymentStatus !== 'Paid' && ord.status !== 'Cancelled' && (
+                      <div className="text-[10px] text-amber-400 mt-1">Ships after the transfer is verified</div>
+                    )}
                   </td>
 
                   <td className="p-3.5 text-right align-top">
@@ -304,6 +299,10 @@ export const AdminOrders: React.FC = () => {
           </table>
         </div>
       </div>
+
+      {payingOrder && (
+        <RecordPaymentModal order={payingOrder} onClose={() => setPayingOrder(null)} onDone={() => { setPayingOrder(null); fetchOrders(); }} />
+      )}
 
       {/* Printable Invoice Modal */}
       {selectedInvoiceOrder && (

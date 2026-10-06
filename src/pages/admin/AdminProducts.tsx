@@ -18,6 +18,8 @@ import { useStore } from '../../context/StoreContext';
 import { useToast } from '../../context/ToastContext';
 import { Product } from '../../types';
 import { ImageUploadField } from '../../components/admin/ImageUploadField';
+import { SpecsEditor, cleanSpecs, Specs } from '../../components/admin/SpecsEditor';
+import { Modal, Field } from './adminUi';
 
 export const AdminProducts: React.FC = () => {
   const { products, categories, brands, formatPrice, refreshProducts } = useStore();
@@ -45,10 +47,11 @@ export const AdminProducts: React.FC = () => {
     warranty: '1 Year Apple Care Kenya Warranty',
     thumbnail: '',
     shortSpecs: '6.3" Super Retina XDR • A18 Pro • 128GB NVMe • 48MP Triple Fusion Camera',
-    description: 'Authentic genuine sealed unit with original manufacturer warranty.',
-    isFeatured: true,
-    isFlashDeal: false,
-    isBestSeller: true
+    description: '',
+    specs: {} as Specs,
+    isFeatured: false,
+    isNewArrival: false,
+    isBestSeller: false
   });
 
   const handleOpenCreate = () => {
@@ -66,8 +69,9 @@ export const AdminProducts: React.FC = () => {
       thumbnail: '',
       shortSpecs: '',
       description: '',
+      specs: {} as Specs,
       isFeatured: false,
-      isFlashDeal: false,
+      isNewArrival: false,
       isBestSeller: false
     });
     setIsModalOpen(true);
@@ -86,14 +90,22 @@ export const AdminProducts: React.FC = () => {
       condition: p.condition,
       warranty: p.warranty,
       thumbnail: p.thumbnail,
-      shortSpecs: p.shortSpecs,
-      description: p.description,
-      isFeatured: p.isFeatured,
-      isFlashDeal: p.isFlashDeal,
-      isBestSeller: p.isBestSeller
+      shortSpecs: p.shortSpecs || '',
+      description: p.description || '',
+      specs: (p.specs || {}) as Specs,
+      isFeatured: !!p.isFeatured,
+      isNewArrival: !!p.isNewArrival,
+      isBestSeller: !!p.isBestSeller
     });
     setIsModalOpen(true);
   };
+
+  const payload = () => ({
+    ...formData,
+    compareAtPrice: formData.compareAtPrice ? formData.compareAtPrice : null,
+    specs: cleanSpecs(formData.specs),
+    images: formData.thumbnail ? [formData.thumbnail] : []
+  });
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -112,7 +124,7 @@ export const AdminProducts: React.FC = () => {
         const res = await fetch(`/api/products/${editingProduct.id}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ...formData, images: [formData.thumbnail] })
+          body: JSON.stringify(payload())
         });
         const data = await res.json();
         if (data.success) {
@@ -126,10 +138,7 @@ export const AdminProducts: React.FC = () => {
         const res = await fetch('/api/products', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            ...formData,
-            images: formData.thumbnail ? [formData.thumbnail] : []
-          })
+          body: JSON.stringify(payload())
         });
         const data = await res.json();
         if (data.success) {
@@ -360,167 +369,63 @@ export const AdminProducts: React.FC = () => {
 
       {/* CREATE / EDIT PRODUCT MODAL */}
       {isModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md animate-in fade-in duration-200 overflow-y-auto">
-          <div className="bg-slate-900 border border-slate-700 rounded-3xl max-w-2xl w-full p-6 sm:p-8 shadow-2xl space-y-5 my-8">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
-              <h3 className="text-lg font-bold text-white">
-                {editingProduct ? `Edit ${editingProduct.name}` : 'Add New Tech Product'}
-              </h3>
-              <button
-                type="button"
-                onClick={() => setIsModalOpen(false)}
-                className="p-1.5 text-slate-400 hover:text-white"
-              >
-                <X className="w-5 h-5" />
-              </button>
+        <Modal
+          title={editingProduct ? `Edit ${editingProduct.name}` : 'Add product'}
+          description="Prices include VAT. Flash-deal discounts are set under Marketing → Flash Deals."
+          onClose={() => setIsModalOpen(false)}
+          footer={<>
+            <button type="button" onClick={() => setIsModalOpen(false)} className="btn btn-secondary">Cancel</button>
+            <button type="submit" form="product-form" disabled={saving} className="btn btn-primary"><Save className="w-4 h-4" />{saving ? 'Saving…' : 'Save product'}</button>
+          </>}
+        >
+          <form id="product-form" onSubmit={handleSave} className="grid grid-cols-1 lg:grid-cols-5 gap-6">
+            <div className="lg:col-span-3 space-y-4">
+              <Field label="Product name" htmlFor="p-name" required>
+                <input id="p-name" value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} placeholder="e.g. HP ProBook 450 G10 Business Laptop" className="field-input" required maxLength={200} />
+              </Field>
+              <Field label="Key features (one line)" htmlFor="p-short" hint="Separate with | — shown on product cards and in comparisons, e.g. Intel Core i5-1334U | 8GB RAM | 512GB SSD">
+                <input id="p-short" value={formData.shortSpecs} onChange={(e) => setFormData({ ...formData, shortSpecs: e.target.value })} className="field-input" maxLength={300} />
+              </Field>
+              <Field label="Description" htmlFor="p-desc" hint="What it is, who it suits and what's in the box. Leave a blank line between paragraphs. Avoid claims you can't back up.">
+                <textarea id="p-desc" rows={7} value={formData.description} onChange={(e) => setFormData({ ...formData, description: e.target.value })} className="field-input leading-relaxed" maxLength={10000} />
+              </Field>
+              <div>
+                <span className="field-label">Specifications</span>
+                <SpecsEditor value={formData.specs} onChange={(specs) => setFormData({ ...formData, specs })} />
+              </div>
             </div>
 
-            <form onSubmit={handleSave} className="space-y-4 text-xs">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="sm:col-span-2">
-                  <label className="block text-slate-300 font-bold mb-1">Product Title:</label>
-                  <input
-                    type="text"
-                    value={formData.name}
-                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                    placeholder="e.g. Apple iPhone 16 Pro Max 256GB"
-                    className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-white"
-                    required
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-slate-300 font-bold mb-1">Brand:</label>
-                  <select
-                    value={formData.brand}
-                    onChange={(e) => setFormData({ ...formData, brand: e.target.value })}
-                    className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-white"
-                  >
-                    {brands.map((b) => (
-                      <option key={b.id} value={b.name}>{b.name}</option>
-                    ))}
+            <div className="lg:col-span-2 space-y-4">
+              <ImageUploadField value={formData.thumbnail} onChange={(url) => setFormData({ ...formData, thumbnail: url })} label="Product image" hint="JPG, PNG, WebP or GIF up to 8 MB" />
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Brand" htmlFor="p-brand">
+                  <select id="p-brand" value={formData.brand} onChange={(e) => setFormData({ ...formData, brand: e.target.value })} className="field-input">
+                    {brands.map((b) => <option key={b.id} value={b.name}>{b.name}</option>)}
                   </select>
-                </div>
-
-                <div>
-                  <label className="block text-slate-300 font-bold mb-1">Category:</label>
-                  <select
-                    value={formData.category}
-                    onChange={(e) => setFormData({ ...formData, category: e.target.value })}
-                    className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-white"
-                  >
-                    {categories.map((c) => (
-                      <option key={c.id} value={c.name}>{c.name}</option>
-                    ))}
+                </Field>
+                <Field label="Category" htmlFor="p-cat">
+                  <select id="p-cat" value={formData.category} onChange={(e) => setFormData({ ...formData, category: e.target.value })} className="field-input">
+                    {categories.map((c) => <option key={c.id} value={c.name}>{c.name}</option>)}
                   </select>
-                </div>
-
-                <div>
-                  <label className="block text-slate-300 font-bold mb-1">Selling Price (KES):</label>
-                  <input
-                    type="number"
-                    value={formData.price}
-                    onChange={(e) => setFormData({ ...formData, price: Number(e.target.value) })}
-                    className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-white font-mono"
-                    required
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-slate-300 font-bold mb-1">Compare at / MSRP (KES):</label>
-                  <input
-                    type="number"
-                    value={formData.compareAtPrice}
-                    onChange={(e) => setFormData({ ...formData, compareAtPrice: Number(e.target.value) })}
-                    className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-white font-mono"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-slate-300 font-bold mb-1">SKU Code:</label>
-                  <input
-                    type="text"
-                    value={formData.sku}
-                    onChange={(e) => setFormData({ ...formData, sku: e.target.value })}
-                    className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-white font-mono"
-                    required
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-slate-300 font-bold mb-1">Available Stock Units:</label>
-                  <input
-                    type="number"
-                    value={formData.stock}
-                    onChange={(e) => setFormData({ ...formData, stock: Number(e.target.value) })}
-                    className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-white font-mono"
-                    required
-                  />
-                </div>
-
-                <div className="sm:col-span-2">
-                  <ImageUploadField
-                    value={formData.thumbnail}
-                    onChange={(url) => setFormData({ ...formData, thumbnail: url })}
-                    label="Product image"
-                    hint="Upload a photo from your computer — JPG, PNG, WebP or GIF up to 8 MB"
-                  />
-                </div>
-
-                <div className="sm:col-span-2">
-                  <label className="block text-slate-300 font-bold mb-1">Key Specifications:</label>
-                  <input
-                    type="text"
-                    value={formData.shortSpecs}
-                    onChange={(e) => setFormData({ ...formData, shortSpecs: e.target.value })}
-                    className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-white"
-                  />
-                </div>
+                </Field>
+                <Field label="Price (KES)" htmlFor="p-price" required><input id="p-price" type="number" min="0" value={formData.price} onChange={(e) => setFormData({ ...formData, price: Number(e.target.value) })} className="field-input font-mono" required /></Field>
+                <Field label="Was price (KES)" htmlFor="p-was" hint="Optional strike-through."><input id="p-was" type="number" min="0" value={formData.compareAtPrice || ''} onChange={(e) => setFormData({ ...formData, compareAtPrice: Number(e.target.value) })} className="field-input font-mono" /></Field>
+                <Field label="SKU" htmlFor="p-sku" required><input id="p-sku" value={formData.sku} onChange={(e) => setFormData({ ...formData, sku: e.target.value })} className="field-input font-mono" required /></Field>
+                <Field label="Stock" htmlFor="p-stock" required><input id="p-stock" type="number" min="0" value={formData.stock} onChange={(e) => setFormData({ ...formData, stock: Number(e.target.value) })} className="field-input font-mono" required /></Field>
+                <Field label="Condition" htmlFor="p-cond"><input id="p-cond" list="conditions" value={formData.condition} onChange={(e) => setFormData({ ...formData, condition: e.target.value })} className="field-input" /><datalist id="conditions"><option value="Brand New Sealed" /><option value="Brand New" /><option value="Ex-UK Grade A" /><option value="Ex-UK Grade B" /><option value="Refurbished" /><option value="Service" /></datalist></Field>
+                <Field label="Warranty" htmlFor="p-war"><input id="p-war" value={formData.warranty} onChange={(e) => setFormData({ ...formData, warranty: e.target.value })} className="field-input" /></Field>
               </div>
-
-              {/* Toggles */}
-              <div className="flex items-center gap-6 pt-2">
-                <label className="flex items-center gap-2 cursor-pointer text-slate-300">
-                  <input
-                    type="checkbox"
-                    checked={formData.isFeatured}
-                    onChange={(e) => setFormData({ ...formData, isFeatured: e.target.checked })}
-                    className="rounded bg-slate-800 text-cyan-600"
-                  />
-                  <span>Featured Flagship</span>
-                </label>
-
-                <label className="flex items-center gap-2 cursor-pointer text-slate-300">
-                  <input
-                    type="checkbox"
-                    checked={formData.isFlashDeal}
-                    onChange={(e) => setFormData({ ...formData, isFlashDeal: e.target.checked })}
-                    className="rounded bg-slate-800 text-cyan-600"
-                  />
-                  <span>Flash Deal Promo</span>
-                </label>
-              </div>
-
-              <div className="pt-4 border-t border-slate-800 flex justify-end gap-3">
-                <button
-                  type="button"
-                  onClick={() => setIsModalOpen(false)}
-                  className="px-5 py-2.5 bg-slate-800 text-slate-300 rounded-xl font-bold"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={saving}
-                  className="px-6 py-2.5 bg-cyan-600 hover:bg-cyan-500 disabled:opacity-60 disabled:cursor-not-allowed text-white rounded-xl font-bold flex items-center gap-2 shadow"
-                >
-                  <Save className="w-4 h-4" />
-                  <span>{saving ? 'Saving…' : 'Save Product'}</span>
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+              <fieldset className="space-y-2">
+                <legend className="field-label">Merchandising</legend>
+                {([['isFeatured', 'Featured on the home page'], ['isNewArrival', 'New arrival'], ['isBestSeller', 'Best seller']] as const).map(([key, label]) => (
+                  <label key={key} className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer">
+                    <input type="checkbox" checked={!!(formData as any)[key]} onChange={(e) => setFormData({ ...formData, [key]: e.target.checked })} className="h-4 w-4 accent-[var(--t-accent-600)]" />{label}
+                  </label>
+                ))}
+              </fieldset>
+            </div>
+          </form>
+        </Modal>
       )}
     </div>
   );

@@ -9,13 +9,14 @@ interface CartContextType {
   cart: CartItem[];
   cartCount: number;
   subtotal: number;
+  /** Server-calculated promo discount for the current cart. */
   discountAmount: number;
-  deliveryFee: number;
+  /** VAT portion of the goods total (prices include VAT). Delivery is priced at checkout. */
   taxAmount: number;
+  taxRate: number;
+  /** Goods total after discount, before delivery. */
   total: number;
   appliedCoupon: Coupon | null;
-  selectedDeliveryZoneId: string;
-  setSelectedDeliveryZoneId: (zoneId: string) => void;
   addToCart: (product: Product, variant?: ProductVariant | null, quantity?: number) => void;
   removeFromCart: (productId: string, variantId?: string | null) => void;
   updateQuantity: (productId: string, variantId: string | null | undefined, quantity: number) => void;
@@ -31,11 +32,11 @@ const CartContext = createContext<CartContextType | undefined>(undefined);
 
 export const CartProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const { showToast } = useToast();
-  const { deliveryZones } = useStore();
+  const { settings } = useStore();
   const { user, isAuthenticated, isLoading: authLoading } = useAuth();
   const [isCartDrawerOpen, setIsCartDrawerOpen] = useState<boolean>(false);
-  const [selectedDeliveryZoneId, setSelectedDeliveryZoneId] = useState<string>('');
   const [appliedCoupon, setAppliedCoupon] = useState<Coupon | null>(null);
+  const [discountAmount, setDiscountAmount] = useState<number>(0);
   const [cart, setCart] = useState<CartItem[]>([]);
 
 
@@ -47,6 +48,7 @@ export const CartProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     if (!isAuthenticated) {
       setCart([]);
       setAppliedCoupon(null);
+      setDiscountAmount(0);
       setIsCartDrawerOpen(false);
       return;
     }
@@ -196,47 +198,31 @@ export const CartProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
     setCart([]);
     setAppliedCoupon(null);
+    setDiscountAmount(0);
   };
 
-  // Calculations
+  // Calculations — display only. The server re-prices everything (items,
+  // flash deals, promo code, delivery, VAT) when the order is created.
   const cartCount = cart.reduce((sum, item) => sum + item.quantity, 0);
   const subtotal = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
+  const taxRate = Number(settings?.taxRate ?? 16);
+  const total = Math.max(0, subtotal - discountAmount);
+  const taxAmount = Math.round((total * taxRate) / (100 + taxRate));
 
-  // Delivery Fee Calculation
-  let deliveryFee = 350;
-  const currentZone = deliveryZones.find((z) => z.id === selectedDeliveryZoneId) || deliveryZones[0];
-  if (currentZone) {
-    deliveryFee = currentZone.freeThreshold && subtotal >= currentZone.freeThreshold ? 0 : currentZone.fee;
-  }
-
-  // Coupon Discount Calculation — display-only estimate; the server always
-  // recomputes this authoritatively at order creation (server/repositories/ordersRepo.js).
-  let discountAmount = 0;
-  if (appliedCoupon && subtotal >= (appliedCoupon.minOrderAmount || 0)) {
-    if (appliedCoupon.discountType === 'percentage') {
-      discountAmount = (subtotal * appliedCoupon.discountValue) / 100;
-      if (appliedCoupon.maxDiscountAmount) {
-        discountAmount = Math.min(discountAmount, appliedCoupon.maxDiscountAmount);
-      }
-    } else {
-      discountAmount = appliedCoupon.discountValue;
-    }
-  }
-
-  const taxableAmount = Math.max(0, subtotal - discountAmount);
-  // Kenya VAT 16% (Inclusive in prices)
-  const taxAmount = Math.round((taxableAmount * 16) / 116);
-  const total = Math.max(0, taxableAmount + deliveryFee);
+  const validateCoupon = async (code: string) => {
+    const res = await fetch('/api/coupons/validate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code })
+    });
+    const data = await res.json().catch(() => ({}));
+    return { ok: res.ok && data.valid, data };
+  };
 
   const applyCoupon = async (code: string): Promise<{ success: boolean; message: string }> => {
     try {
-      const res = await fetch('/api/coupons/validate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code, orderAmount: subtotal })
-      });
-      const data = await res.json();
-      if (data.valid) {
+      const { ok, data } = await validateCoupon(code);
+      if (ok) {
         setAppliedCoupon({
           code: data.code,
           discountType: data.discountType,
@@ -244,19 +230,42 @@ export const CartProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           description: data.description,
           isActive: true
         });
-        showToast(`Coupon ${data.code} applied: -KES ${Math.round(data.calculatedDiscount).toLocaleString()}`, 'success');
-        return { success: true, message: 'Coupon applied successfully!' };
+        setDiscountAmount(Number(data.calculatedDiscount) || 0);
+        showToast(`Promo code ${data.code} applied: -KES ${Math.round(data.calculatedDiscount).toLocaleString('en-KE')}`, 'success');
+        return { success: true, message: 'Promo code applied' };
       }
-      showToast(data.message || 'Invalid coupon', 'error');
-      return { success: false, message: data.message || 'Invalid coupon' };
+      showToast(data.message || 'This promo code is not valid', 'error');
+      return { success: false, message: data.message || 'This promo code is not valid' };
     } catch {
       showToast('Unable to reach the server. Please try again.', 'error');
       return { success: false, message: 'Unable to reach the server. Please try again.' };
     }
   };
 
+  // Cart contents changed: re-check the promo code against the new cart.
+  const cartSignature = cart.map((i) => `${i.productId}:${i.variantId || ''}:${i.quantity}`).join('|');
+  useEffect(() => {
+    if (!appliedCoupon || !cart.length) {
+      if (!cart.length && appliedCoupon) { setAppliedCoupon(null); setDiscountAmount(0); }
+      return;
+    }
+    let cancelled = false;
+    validateCoupon(appliedCoupon.code).then(({ ok, data }) => {
+      if (cancelled) return;
+      if (ok) setDiscountAmount(Number(data.calculatedDiscount) || 0);
+      else {
+        setAppliedCoupon(null);
+        setDiscountAmount(0);
+        showToast(`Promo code removed: ${data.message || 'no longer valid for this cart'}`, 'warning');
+      }
+    }).catch(() => {});
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cartSignature]);
+
   const removeCoupon = () => {
     setAppliedCoupon(null);
+    setDiscountAmount(0);
     showToast('Coupon removed', 'info');
   };
 
@@ -267,12 +276,10 @@ export const CartProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         cartCount,
         subtotal,
         discountAmount,
-        deliveryFee,
         taxAmount,
+        taxRate,
         total,
         appliedCoupon,
-        selectedDeliveryZoneId: selectedDeliveryZoneId || currentZone?.id || '',
-        setSelectedDeliveryZoneId,
         addToCart,
         removeFromCart,
         updateQuantity,

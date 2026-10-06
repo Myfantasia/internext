@@ -14,6 +14,7 @@ import { Footer } from '../components/layout/Footer';
 import { FloatingWhatsApp } from '../components/layout/FloatingWhatsApp';
 import { CompareDrawer } from '../components/common/CompareDrawer';
 import { CartDrawer } from '../components/checkout/CartDrawer';
+import { useBodyScrollLock } from '../components/common/Overlay';
 import { ProductCard } from '../components/common/ProductCard';
 import { useStore } from '../context/StoreContext';
 import { Product } from '../types';
@@ -65,6 +66,7 @@ export const ShopPage: React.FC = () => {
   const [sortBy, setSortBy] = useState('featured');
   const [viewLayout, setViewLayout] = useState<'grid' | 'list'>('grid');
   const [isMobileFilterOpen, setIsMobileFilterOpen] = useState(false);
+  useBodyScrollLock(isMobileFilterOpen);
 
   useEffect(() => {
     const syncWithUrl = () => {
@@ -484,7 +486,7 @@ export const ShopPage: React.FC = () => {
         <div className="lg:hidden fixed inset-0 z-50 overflow-hidden">
           <div onClick={() => setIsMobileFilterOpen(false)} className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm" />
           <div className="absolute inset-y-0 right-0 flex pl-10">
-            <div className="w-screen max-w-sm bg-slate-900 p-6 flex flex-col overflow-y-auto space-y-5">
+            <div className="w-screen max-w-sm bg-slate-900 p-6 flex flex-col overflow-y-auto overscroll-contain space-y-5">
               <div className="flex items-center justify-between pb-4 border-b border-slate-800">
                 <h3 className="font-extrabold text-base text-white">Filter Products</h3>
                 <button type="button" onClick={() => setIsMobileFilterOpen(false)} className="p-2 text-slate-400 hover:text-white">

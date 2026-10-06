@@ -30,10 +30,10 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product, layout = 'gri
 
   const [isQuickViewOpen, setIsQuickViewOpen] = useState<boolean>(false);
 
-  const discountPercent =
-    product.compareAtPrice && product.compareAtPrice > product.price
-      ? Math.round(((product.compareAtPrice - product.price) / product.compareAtPrice) * 100)
-      : 0;
+  // Live flash-deal price (server-computed) takes precedence over list price.
+  const displayPrice = product.flashDeal?.dealPrice ?? product.price;
+  const wasPrice = product.flashDeal ? product.price : product.compareAtPrice && product.compareAtPrice > product.price ? product.compareAtPrice : null;
+  const discountPercent = wasPrice && wasPrice > displayPrice ? Math.round(((wasPrice - displayPrice) / wasPrice) * 100) : 0;
 
   const isSaved = isInWishlist(product.id);
   const isCompared = isComparing(product.id);
@@ -91,11 +91,11 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product, layout = 'gri
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pt-4 border-t border-slate-800/80 mt-4">
             <div>
               <div className="text-lg sm:text-xl font-extrabold text-white">
-                {formatPrice(product.price)}
+                {formatPrice(displayPrice)}
               </div>
-              {product.compareAtPrice && (
+              {wasPrice && (
                 <div className="text-xs text-slate-500 line-through">
-                  {formatPrice(product.compareAtPrice)}
+                  {formatPrice(wasPrice)}
                 </div>
               )}
             </div>
@@ -159,7 +159,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product, layout = 'gri
 
   // Default Grid Layout
   return (
-    <div className="bg-slate-900 border border-slate-800/90 hover:border-emerald-700/35 rounded-3xl p-3.5 sm:p-4 flex flex-col justify-between transition-all duration-300 hover:-translate-y-1 hover:shadow-2xl hover:shadow-emerald-950/15 group relative overflow-hidden">
+    <div className="product-card bg-slate-900 border border-slate-800/90 rounded-3xl p-3.5 sm:p-4 flex flex-col justify-between group relative overflow-hidden min-w-0">
       {/* Top badges */}
       <div className="flex items-center justify-between gap-1 mb-2.5">
         <div className="flex items-center gap-1.5 flex-wrap">
@@ -266,11 +266,11 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product, layout = 'gri
         <div className="pt-3.5 border-t border-slate-800/80 mt-3.5 flex items-center justify-between gap-2">
           <div>
             <div className="text-base font-extrabold text-white">
-              {formatPrice(product.price)}
+              {formatPrice(displayPrice)}
             </div>
-            {product.compareAtPrice && (
+            {wasPrice && (
               <div className="text-[11px] text-slate-500 line-through">
-                {formatPrice(product.compareAtPrice)}
+                {formatPrice(wasPrice)}
               </div>
             )}
           </div>

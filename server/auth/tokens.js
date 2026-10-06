@@ -6,7 +6,12 @@ if (!process.env.SESSION_SECRET || process.env.SESSION_SECRET.length < 32) {
 }
 
 const SECRET = new TextEncoder().encode(process.env.SESSION_SECRET);
-const SESSION_TTL_SECONDS = 60 * 60 * 24 * 7; // 7 days
+// Absolute session lifetime. Enforced in three places that must agree: the JWT
+// `exp` claim, the sessions.expires_at row (checked on every request), and the
+// cookie max-age. Sliding renewal is deliberately NOT done: after 3 hours the
+// user must sign in again, however active they were.
+const SESSION_TTL_HOURS = Number(process.env.SESSION_TTL_HOURS) > 0 ? Number(process.env.SESSION_TTL_HOURS) : 3;
+const SESSION_TTL_SECONDS = Math.round(SESSION_TTL_HOURS * 60 * 60);
 
 // --- Session JWT (identity + role claims, stateless-verifiable) ---------
 // The `sid` claim references a row in the `sessions` table so a session can
@@ -29,6 +34,10 @@ export async function verifySessionToken(token) {
 
 export function sessionCookieMaxAgeMs() {
   return SESSION_TTL_SECONDS * 1000;
+}
+
+export function sessionTtlSeconds() {
+  return SESSION_TTL_SECONDS;
 }
 
 // --- Opaque single-use tokens (email verification / password reset / invites) ---

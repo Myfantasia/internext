@@ -17,6 +17,7 @@ import { useStore } from '../../context/StoreContext';
 import { useCart } from '../../context/CartContext';
 import { useWishlist } from '../../context/WishlistContext';
 import { useCompare } from '../../context/CompareContext';
+import { Portal, useBodyScrollLock, useEscapeKey } from './Overlay';
 
 interface QuickViewModalProps {
   product: Product;
@@ -34,6 +35,8 @@ export const QuickViewModal: React.FC<QuickViewModalProps> = ({ product, onClose
     product.variants && product.variants.length > 0 ? product.variants[0] : null
   );
   const [quantity, setQuantity] = useState<number>(1);
+  useBodyScrollLock();
+  useEscapeKey(onClose);
 
   const activePrice = selectedVariant ? selectedVariant.price : product.price;
   const activeStock = selectedVariant ? selectedVariant.stock : product.stock;
@@ -48,6 +51,7 @@ export const QuickViewModal: React.FC<QuickViewModalProps> = ({ product, onClose
   const isCompared = isComparing(product.id);
 
   return (
+    <Portal>
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-200">
       <div className="bg-slate-900 border border-slate-700/80 rounded-3xl max-w-4xl w-full max-h-[90vh] overflow-y-auto shadow-2xl relative">
         {/* Close Button */}
@@ -236,5 +240,6 @@ export const QuickViewModal: React.FC<QuickViewModalProps> = ({ product, onClose
         </div>
       </div>
     </div>
+    </Portal>
   );
 };

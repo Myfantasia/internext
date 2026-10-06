@@ -5,22 +5,45 @@ import { Footer } from '../components/layout/Footer';
 import { FloatingWhatsApp } from '../components/layout/FloatingWhatsApp';
 import { useStore } from '../context/StoreContext';
 import { useToast } from '../context/ToastContext';
+import { useAuth } from '../context/AuthContext';
 
+// The contact form opens a real support ticket, so every message lands in the
+// staff Tickets inbox and gets a reference the customer can follow up on.
 export const ContactUsPage: React.FC = () => {
   const { settings } = useStore();
   const { showToast } = useToast();
+  const { user } = useAuth();
 
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
   const [subject, setSubject] = useState('');
   const [message, setMessage] = useState('');
-  const [submitted, setSubmitted] = useState(false);
+  const [submitted, setSubmitted] = useState<string | null>(null);
+  const [sending, setSending] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setSubmitted(true);
-    showToast('Your message has been sent to our customer care team!', 'success');
+    setSending(true);
+    try {
+      const res = await fetch('/api/tickets', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          subject: subject.trim(), message: message.trim(), category: 'Product Inquiry',
+          customerName: user ? undefined : name.trim(), customerEmail: user ? undefined : email.trim(), customerPhone: user ? undefined : phone.trim() || undefined
+        })
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data?.success) { showToast(data?.message || 'Could not send your message. Please try again.', 'error'); return; }
+      setSubmitted(data.ticket.ticketNumber);
+      setSubject('');
+      setMessage('');
+    } catch {
+      showToast('Could not reach the server. Please try again or WhatsApp us.', 'error');
+    } finally {
+      setSending(false);
+    }
   };
 
   return (
@@ -103,13 +126,14 @@ export const ContactUsPage: React.FC = () => {
                 <div className="w-16 h-16 rounded-full bg-emerald-950/80 border border-emerald-500 text-emerald-400 mx-auto flex items-center justify-center">
                   <CheckCircle2 className="w-8 h-8" />
                 </div>
-                <h3 className="text-xl font-bold text-white">Message Sent Successfully</h3>
-                <p className="text-xs text-slate-300 max-w-sm mx-auto">
-                  Thank you for reaching out. A hardware specialist from our Nairobi team will review your inquiry and reply within 1 hour.
+                <h3 className="text-xl font-bold text-white">Message received</h3>
+                <p className="text-sm text-slate-300 max-w-sm mx-auto">
+                  Your reference is <strong className="font-mono text-white">{submitted}</strong>. We usually reply within one business day{user ? ' — follow the conversation under My Account → Support.' : ` by email to ${email}.`}
                 </p>
+                {user && <a href="/customer/dashboard?tab=tickets" className="btn btn-primary btn-sm">View my tickets</a>}
                 <button
                   type="button"
-                  onClick={() => setSubmitted(false)}
+                  onClick={() => setSubmitted(null)}
                   className="px-6 py-2.5 bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold rounded-xl"
                 >
                   Send Another Message
@@ -119,7 +143,11 @@ export const ContactUsPage: React.FC = () => {
               <form onSubmit={handleSubmit} className="space-y-4 text-xs">
                 <h3 className="text-lg font-bold text-white">Send Us a Direct Message</h3>
 
+                {user && (
+                  <p className="text-sm text-slate-400">Sending as <strong className="text-white">{user.name}</strong> ({user.email}). Replies appear under My Account → Support.</p>
+                )}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {!user && <>
                   <div>
                     <label className="block text-slate-400 mb-1">Your Full Name:</label>
                     <input
@@ -155,6 +183,7 @@ export const ContactUsPage: React.FC = () => {
                     />
                   </div>
 
+                  </>}
                   <div>
                     <label className="block text-slate-400 mb-1">Subject:</label>
                     <input
@@ -182,10 +211,11 @@ export const ContactUsPage: React.FC = () => {
 
                 <button
                   type="submit"
-                  className="px-8 py-3.5 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-extrabold text-xs rounded-xl flex items-center justify-center gap-2 shadow-lg shadow-cyan-600/30 transition-all"
+                  disabled={sending}
+                  className="disabled:opacity-60 px-8 py-3.5 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-extrabold text-xs rounded-xl flex items-center justify-center gap-2 shadow-lg shadow-cyan-600/30 transition-all"
                 >
                   <Send className="w-4 h-4" />
-                  <span>Send Inquiry</span>
+                  <span>{sending ? 'Sending…' : 'Send Inquiry'}</span>
                 </button>
               </form>
             )}

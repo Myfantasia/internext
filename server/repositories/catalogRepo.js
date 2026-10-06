@@ -2,6 +2,49 @@ import { eq, and, ilike, gte, lte, inArray, desc, asc, sql, or } from 'drizzle-o
 import { db } from '../db/client.js';
 import { categories, brands, products, productVariants } from '../db/schema.js';
 import { isUuid } from '../db/util.js';
+import { getLiveFlashDeals, listLiveFlashDealProductIds, toPublicDeal } from '../services/pricing.js';
+
+// --- Search -----------------------------------------------------------------
+// Must match the expression of products_search_fts_idx exactly for Postgres to use the index.
+const PRODUCT_DOCUMENT = sql`to_tsvector('simple', coalesce(${products.name}, '') || ' ' || coalesce(${products.sku}, '') || ' ' || coalesce(${products.shortSpecs}, '') || ' ' || coalesce(${products.description}, ''))`;
+
+// "hp 840 g9" -> 'hp:* & 840:* & g9:*' (prefix match on every word). Only
+// [a-z0-9] survive, so user input can never break tsquery syntax.
+function prefixTsQuery(text) {
+  const terms = String(text).toLowerCase().split(/[^a-z0-9]+/).filter(Boolean).slice(0, 8);
+  return terms.length ? terms.map((t) => `${t}:*`).join(' & ') : null;
+}
+
+function searchCondition(text) {
+  const q = String(text).trim().slice(0, 100);
+  const like = `%${q.replace(/[%_\\]/g, (c) => `\\${c}`)}%`;
+  const tsq = prefixTsQuery(q);
+  return or(
+    ...(tsq ? [sql`${PRODUCT_DOCUMENT} @@ to_tsquery('simple', ${tsq})`] : []),
+    ilike(products.name, like),
+    ilike(products.sku, like),
+    ilike(brands.name, like)
+  );
+}
+
+// Relevance: full-text rank plus trigram similarity of the name (typo tolerance).
+function searchRank(text) {
+  const q = String(text).trim().slice(0, 100);
+  const tsq = prefixTsQuery(q);
+  return tsq
+    ? sql`ts_rank(${PRODUCT_DOCUMENT}, to_tsquery('simple', ${tsq})) + similarity(${products.name}, ${q})`
+    : sql`similarity(${products.name}, ${q})`;
+}
+
+// Attaches live flash deals (and the legacy isFlashDeal/flashDealEnds fields
+// the storefront already reads) to API products.
+async function withFlashDeals(apiProducts) {
+  const deals = await getLiveFlashDeals(apiProducts.map((p) => p.id));
+  return apiProducts.map((p) => {
+    const deal = toPublicDeal(deals.get(p.id), p.price);
+    return { ...p, flashDeal: deal, isFlashDeal: !!deal, flashDealEnds: deal?.endsAt || null };
+  });
+}
 
 // --- Categories ---------------------------------------------------------
 
@@ -29,6 +72,11 @@ export async function createCategory(data) {
   return row;
 }
 
+export async function updateCategory(id, patch) {
+  const [row] = await db.update(categories).set({ ...patch, updatedAt: new Date() }).where(eq(categories.id, id)).returning();
+  return row || null;
+}
+
 export async function findCategoryByName(name) {
   if (!name) return null;
   const [row] = await db.select().from(categories).where(ilike(categories.name, String(name).trim())).limit(1);
@@ -51,6 +99,11 @@ export async function listBrands() {
 export async function createBrand(data) {
   const [row] = await db.insert(brands).values(data).returning();
   return row;
+}
+
+export async function updateBrand(id, patch) {
+  const [row] = await db.update(brands).set(patch).where(eq(brands.id, id)).returning();
+  return row || null;
 }
 
 export async function findBrandByName(name) {
@@ -96,7 +149,6 @@ function toApiVariant(v) {
 }
 
 export async function searchProductSuggestions(query) {
-  const q = `%${query}%`;
   const rows = await db
     .select({
       id: products.id,
@@ -112,10 +164,21 @@ export async function searchProductSuggestions(query) {
     .from(products)
     .leftJoin(brands, eq(products.brandId, brands.id))
     .leftJoin(categories, eq(products.categoryId, categories.id))
-    .where(and(eq(products.isActive, true), or(ilike(products.name, q), ilike(products.sku, q), ilike(brands.name, q))))
+    .where(and(eq(products.isActive, true), searchCondition(query)))
+    .orderBy(desc(searchRank(query)))
     .limit(8);
 
-  return rows.map((r) => ({ ...r, thumbnail: r.thumbnailUrl, price: Number(r.price), compareAtPrice: r.compareAtPrice != null ? Number(r.compareAtPrice) : null }));
+  const deals = await getLiveFlashDeals(rows.map((r) => r.id));
+  return rows.map((r) => {
+    const deal = toPublicDeal(deals.get(r.id), Number(r.price));
+    return { ...r, thumbnail: r.thumbnailUrl, price: Number(r.price), compareAtPrice: r.compareAtPrice != null ? Number(r.compareAtPrice) : null, flashDeal: deal };
+  });
+}
+
+export async function searchCategorySuggestions(query) {
+  const like = `%${String(query).trim().slice(0, 60)}%`;
+  return db.select({ id: categories.id, name: categories.name, slug: categories.slug }).from(categories)
+    .where(ilike(categories.name, like)).limit(4);
 }
 
 export async function listProducts({
@@ -136,23 +199,25 @@ export async function listProducts({
   if (condition) conditions.push(ilike(products.condition, `%${condition}%`));
   if (inStock === 'true' || inStock === true) conditions.push(sql`${products.stock} > 0`);
   if (featured === 'true' || featured === true) conditions.push(eq(products.isFeatured, true));
-  if (flashDeal === 'true' || flashDeal === true) conditions.push(eq(products.isFlashDeal, true));
-  if (search) {
-    const q = `%${search}%`;
-    conditions.push(or(ilike(products.name, q), ilike(products.description, q), ilike(products.shortSpecs, q), ilike(products.sku, q)));
+  if (flashDeal === 'true' || flashDeal === true) {
+    const ids = await listLiveFlashDealProductIds(100);
+    if (!ids.length) return { products: [], total: 0, page: 1, totalPages: 0 };
+    conditions.push(inArray(products.id, ids));
   }
+  if (search && String(search).trim()) conditions.push(searchCondition(search));
 
-  let orderBy = [desc(products.isFeatured)];
+  let orderBy = search && String(search).trim() && !sortBy ? [desc(searchRank(search))] : [desc(products.isFeatured)];
   switch (sortBy) {
     case 'price-asc': orderBy = [asc(products.price)]; break;
     case 'price-desc': orderBy = [desc(products.price)]; break;
     case 'rating': orderBy = [desc(products.rating)]; break;
     case 'newest': orderBy = [desc(products.isNewArrival), desc(products.createdAt)]; break;
-    default: orderBy = [desc(products.isFeatured)];
+    default: break;
   }
+  orderBy.push(asc(products.id)); // stable pagination
 
-  const pageNum = parseInt(page, 10) || 1;
-  const limitNum = parseInt(limit, 10) || 50;
+  const pageNum = Math.max(1, parseInt(page, 10) || 1);
+  const limitNum = Math.min(Math.max(1, parseInt(limit, 10) || 50), 200);
   const offset = (pageNum - 1) * limitNum;
 
   const baseQuery = db
@@ -171,7 +236,7 @@ export async function listProducts({
     .where(and(...conditions));
 
   return {
-    products: rows.map(withRelations),
+    products: await withFlashDeals(rows.map(withRelations)),
     total,
     page: pageNum,
     totalPages: Math.ceil(total / limitNum)
@@ -190,7 +255,8 @@ export async function findProductByIdentifier(identifier) {
   if (!row) return null;
 
   const variants = await db.select().from(productVariants).where(eq(productVariants.productId, row.products.id));
-  return { ...withRelations(row), variants: variants.map(toApiVariant) };
+  const [withDeal] = await withFlashDeals([withRelations(row)]);
+  return { ...withDeal, variants: variants.map(toApiVariant) };
 }
 
 export async function findRelatedProducts(product, limit = 6) {
@@ -207,37 +273,46 @@ export async function findRelatedProducts(product, limit = 6) {
       )
     )
     .limit(limit);
-  return rows.map(withRelations);
+  return withFlashDeals(rows.map(withRelations));
+}
+
+// Columns an admin may write. Anything else in a request body is ignored —
+// rating, reviewsCount, reservedStock etc. are maintained by the server.
+function productColumns(data) {
+  const out = {};
+  const set = (key, value) => { if (value !== undefined) out[key] = value; };
+  const money = (v) => (v === undefined ? undefined : v === null || v === '' ? null : String(Number(v)));
+  set('name', data.name);
+  set('slug', data.slug);
+  set('sku', data.sku);
+  set('brandId', data.brandId);
+  set('categoryId', data.categoryId);
+  set('shortSpecs', data.shortSpecs);
+  set('description', data.description);
+  set('price', data.price === undefined ? undefined : String(Number(data.price)));
+  set('compareAtPrice', money(data.compareAtPrice));
+  set('costPrice', money(data.costPrice));
+  set('condition', data.condition);
+  set('warranty', data.warranty);
+  set('stock', data.stock);
+  set('reorderLevel', data.reorderLevel);
+  set('thumbnailUrl', data.thumbnail ?? data.thumbnailUrl);
+  set('images', data.images);
+  set('specs', data.specs);
+  set('isFeatured', data.isFeatured);
+  set('isNewArrival', data.isNewArrival);
+  set('isBestSeller', data.isBestSeller);
+  set('isActive', data.isActive);
+  return out;
 }
 
 export async function createProduct(data) {
-  const values = {
-    name: data.name,
-    slug: data.slug,
-    sku: data.sku,
-    brandId: data.brandId || null,
-    categoryId: data.categoryId,
-    shortSpecs: data.shortSpecs || null,
-    description: data.description || null,
-    price: String(Number(data.price) || 0),
-    compareAtPrice: data.compareAtPrice != null && data.compareAtPrice !== '' ? String(Number(data.compareAtPrice)) : null,
-    costPrice: data.costPrice != null && data.costPrice !== '' ? String(Number(data.costPrice)) : null,
-    condition: data.condition || null,
-    warranty: data.warranty || null,
-    stock: Number(data.stock) || 0,
-    thumbnailUrl: data.thumbnailUrl || data.thumbnail || null,
-    images: Array.isArray(data.images) ? data.images : [],
-    isFeatured: Boolean(data.isFeatured),
-    isFlashDeal: Boolean(data.isFlashDeal),
-    isBestSeller: Boolean(data.isBestSeller),
-    isNewArrival: Boolean(data.isNewArrival)
-  };
-  const [row] = await db.insert(products).values(values).returning();
+  const [row] = await db.insert(products).values(productColumns(data)).returning();
   return row;
 }
 
-export async function updateProduct(id, patch) {
-  const [row] = await db.update(products).set({ ...patch, updatedAt: new Date() }).where(eq(products.id, id)).returning();
+export async function updateProduct(id, data) {
+  const [row] = await db.update(products).set({ ...productColumns(data), updatedAt: new Date() }).where(eq(products.id, id)).returning();
   return row;
 }
 
@@ -247,6 +322,7 @@ export async function deleteProduct(id) {
 }
 
 export async function getProductById(id) {
+  if (!isUuid(id)) return null;
   const [row] = await db.select().from(products).where(eq(products.id, id)).limit(1);
   return row || null;
 }

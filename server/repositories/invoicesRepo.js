@@ -6,14 +6,14 @@ function invoiceNumberFor(seq) {
   return `INV-${year}-${String(seq).padStart(6, '0')}`;
 }
 
-// Invoice numbers are never client-generated — always derived server-side
-// from a DB sequence count, inside the same transaction as order creation.
+// Invoice numbers are never client-generated — always taken from a Postgres
+// sequence (safe under concurrent checkouts), in the order's transaction.
 export async function createInvoiceForOrder(tx, order) {
-  const [{ count: existingCount }] = await tx.select({ count: sql`count(*)::int` }).from(invoices);
+  const [{ seq }] = await tx.execute(sql`select nextval('invoice_number_seq')::bigint as seq`);
   const [invoice] = await tx
     .insert(invoices)
     .values({
-      invoiceNumber: invoiceNumberFor(existingCount + 1),
+      invoiceNumber: invoiceNumberFor(seq),
       orderId: order.id,
       subtotal: String(order.subtotal),
       discountAmount: String(order.discountAmount),

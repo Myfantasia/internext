@@ -15,15 +15,22 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
+import { navigate } from '../utils/navigation';
+import { safeReturnPath } from '../utils/session';
+import { PasswordInput } from '../components/forms/PasswordInput';
 
 export const AdminAuthPage: React.FC = () => {
   const { login } = useAuth();
   const { showToast } = useToast();
+  const params = new URLSearchParams(window.location.search);
+  const notice = params.get('registered') === '1' ? 'registered' : params.get('reason') === 'expired' ? 'expired' : null;
 
-  const [email, setEmail] = useState('');
+  const [email, setEmail] = useState(() => {
+    const fromLink = new URLSearchParams(window.location.search).get('email');
+    if (fromLink) return fromLink;
+    try { return sessionStorage.getItem('ibs-registered-email') || ''; } catch { return ''; }
+  });
   const [password, setPassword] = useState('');
-  const [showPwd, setShowPwd] = useState(false);
-  const [rememberMe, setRememberMe] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [loggedInRole, setLoggedInRole] = useState<string | null>(null);
@@ -33,20 +40,19 @@ export const AdminAuthPage: React.FC = () => {
     setError('');
     setLoading(true);
 
-    const result = await login(email, password);
+    // The server only opens a session here for staff accounts; customer
+    // accounts are refused with USE_STORE_SIGNIN before any session exists.
+    const result = await login(email, password, 'staff');
 
     if (result.success) {
       const role = result.user?.role;
-      if (role === 'ADMIN' || role === 'SALES_MANAGER') {
-        setLoggedInRole(role);
-        showToast(`Welcome back! Signing you in as ${role === 'ADMIN' ? 'Administrator' : 'Sales Manager'}…`, 'success');
-        setTimeout(() => {
-          window.location.href = '/admin';
-        }, 1200);
-      } else {
-        // Authenticated but not staff — reject
-        setError('Access denied. This portal is for authorized staff only. Please use the customer sign-in.');
-      }
+      setLoggedInRole(role || null);
+      showToast(`Welcome back! Signing you in as ${role === 'ADMIN' ? 'Administrator' : 'Sales Manager'}…`, 'success');
+      try { sessionStorage.removeItem('ibs-registered-email'); } catch { /* ignore */ }
+      const target = safeReturnPath(params.get('redirect'), '/admin');
+      setTimeout(() => navigate(target.startsWith('/admin') ? target : '/admin'), 600);
+    } else if (result.code === 'USE_STORE_SIGNIN') {
+      setError('This portal is for staff only. Customers sign in on the store at /auth.');
     } else {
       setError(result.message || 'Access denied. Invalid credentials or insufficient permissions.');
     }
@@ -114,6 +120,19 @@ export const AdminAuthPage: React.FC = () => {
               </div>
             )}
 
+            {notice === 'registered' && !loggedInRole && (
+              <div className="callout callout-success" role="status">
+                <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" aria-hidden="true" />
+                <p><strong>Staff account created.</strong> Sign in to open the dashboard.</p>
+              </div>
+            )}
+            {notice === 'expired' && !loggedInRole && (
+              <div className="callout callout-warning" role="status">
+                <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" aria-hidden="true" />
+                <p><strong>Your session expired.</strong> Staff sessions last 3 hours. Sign in again to continue.</p>
+              </div>
+            )}
+
             {/* Error */}
             {error && (
               <div className="bg-rose-950/50 border border-rose-800/60 text-rose-300 text-sm rounded-xl px-4 py-3 flex items-start gap-2.5">
@@ -141,45 +160,15 @@ export const AdminAuthPage: React.FC = () => {
                   </div>
                 </div>
 
-                <div>
-                  <label className="block text-sm font-semibold text-slate-300 mb-1.5">Password</label>
-                  <div className="relative">
-                    <Lock className="w-4 h-4 text-slate-500 absolute left-3.5 top-4" />
-                    <input
-                      type={showPwd ? 'text' : 'password'}
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      placeholder="••••••••••"
-                      className={inputBase}
-                      required
-                      autoComplete="current-password"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowPwd((v) => !v)}
-                      className="absolute right-3.5 top-3.5 text-slate-500 hover:text-slate-300 transition-colors"
-                      tabIndex={-1}
-                    >
-                      {showPwd ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                    </button>
-                  </div>
-                </div>
-
-                <label className="flex items-center gap-3 cursor-pointer">
-                  <div
-                    onClick={() => setRememberMe((v) => !v)}
-                    className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-all cursor-pointer ${
-                      rememberMe ? 'bg-amber-500 border-amber-500' : 'border-slate-600 hover:border-slate-500'
-                    }`}
-                  >
-                    {rememberMe && (
-                      <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                      </svg>
-                    )}
-                  </div>
-                  <span className="text-sm text-slate-400 select-none">Keep me signed in on this device</span>
-                </label>
+                <PasswordInput
+                  label="Password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="Your password"
+                  required
+                  autoComplete="current-password"
+                />
+                <p className="text-xs text-slate-500">For security, staff sessions end automatically after 3 hours.</p>
 
                 <button
                   type="submit"

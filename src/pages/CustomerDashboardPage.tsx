@@ -15,8 +15,15 @@ import {
   CheckCircle2,
   AlertCircle,
   Gift,
-  Copy
+  Copy,
+  Star
 } from 'lucide-react';
+import { ReferralPanel } from '../components/account/ReferralPanel';
+import { MyReviewsPanel } from '../components/account/MyReviewsPanel';
+import { ProfilePanel } from '../components/account/ProfilePanel';
+import { SupportTicketsPanel } from '../components/account/SupportTicketsPanel';
+import { LocationPicker } from '../components/location/LocationPicker';
+import { UserLocation } from '../types';
 import { Header } from '../components/layout/Header';
 import { Footer } from '../components/layout/Footer';
 import { FloatingWhatsApp } from '../components/layout/FloatingWhatsApp';
@@ -25,7 +32,7 @@ import { useAuth } from '../context/AuthContext';
 import { useStore } from '../context/StoreContext';
 import { useWishlist } from '../context/WishlistContext';
 import { useToast } from '../context/ToastContext';
-import { Order, SupportTicket } from '../types';
+import { Order } from '../types';
 
 export const CustomerDashboardPage: React.FC = () => {
   const { user, logout, updateProfile } = useAuth();
@@ -33,41 +40,30 @@ export const CustomerDashboardPage: React.FC = () => {
   const { wishlist, removeFromWishlist } = useWishlist();
   const { showToast } = useToast();
 
-  const [activeTab, setActiveTab] = useState<'orders' | 'wishlist' | 'addresses' | 'tickets' | 'settings'>('orders');
-  const [orders, setOrders] = useState<Order[]>([]);
-  const [tickets, setTickets] = useState<SupportTicket[]>([]);
-  const [selectedInvoiceOrder, setSelectedInvoiceOrder] = useState<Order | null>(null);
-  const [profileName, setProfileName] = useState(user?.name || '');
-  const [profilePhone, setProfilePhone] = useState(user?.phone || '');
-  const [savingProfile, setSavingProfile] = useState(false);
-  const [referralSummary, setReferralSummary] = useState<{ referralCode: string; totalReferrals: number; verifiedReferrals: number; rewards: { couponCode: string; referralCount: number; usedCount: number; validUntil: string | null }[] } | null>(null);
-
-  useEffect(() => {
-    setProfileName(user?.name || '');
-    setProfilePhone(user?.phone || '');
-  }, [user]);
-
-  const handleSaveProfile = async () => {
-    setSavingProfile(true);
-    const result = await updateProfile({ name: profileName, phone: profilePhone });
-    setSavingProfile(false);
-    showToast(result.success ? 'Profile updated successfully!' : (result.message || 'Unable to update profile'), result.success ? 'success' : 'error');
+  type Tab = 'orders' | 'wishlist' | 'addresses' | 'referrals' | 'reviews' | 'tickets' | 'settings';
+  const [activeTab, setActiveTab] = useState<Tab>(() => {
+    const t = new URLSearchParams(window.location.search).get('tab') as Tab | null;
+    return t && ['orders', 'wishlist', 'addresses', 'referrals', 'reviews', 'tickets', 'settings'].includes(t) ? t : 'orders';
+  });
+  const [location, setLocation] = useState<UserLocation>(() => user?.location || { county: '', town: '', addressLine: '', lat: null, lng: null, source: 'manual' });
+  const [savingLocation, setSavingLocation] = useState(false);
+  const saveLocation = async () => {
+    if (!location.county || !location.town?.trim()) { showToast('Choose your county and enter your town', 'error'); return; }
+    setSavingLocation(true);
+    const result = await updateProfile({ location });
+    setSavingLocation(false);
+    showToast(result.success ? 'Delivery location saved' : (result.message || 'Could not save location'), result.success ? 'success' : 'error');
   };
-
-  // New Ticket Form State
-  const [ticketSubject, setTicketSubject] = useState('');
-  const [ticketCategory, setTicketCategory] = useState('Product Inquiry');
-  const [ticketMessage, setTicketMessage] = useState('');
-  const [isSubmittingTicket, setIsSubmittingTicket] = useState(false);
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [openTicketCount, setOpenTicketCount] = useState<number | undefined>(undefined);
+  const [selectedInvoiceOrder, setSelectedInvoiceOrder] = useState<Order | null>(null);
 
   useEffect(() => {
     if (user?.email) {
-      fetch('/api/auth/referrals').then((res) => res.ok ? res.json() : null)
-        .then((data) => { if (data?.success) setReferralSummary(data); }).catch(() => {});
       // Fetch customer orders — scoped server-side to the authenticated
       // session (server/routes/orderRoutes.js), the URL segment is ignored
       // for non-staff requesters.
-      fetch(`/api/orders/customer/${encodeURIComponent(user.email)}`)
+      fetch('/api/orders/mine')
         .then((res) => {
           if (!res.ok) return null;
           const ct = res.headers.get('content-type');
@@ -78,54 +74,8 @@ export const CustomerDashboardPage: React.FC = () => {
         })
         .catch(() => {});
 
-      // Fetch this customer's own tickets (staff-only /api/tickets no longer
-      // works here — /mine is scoped server-side to the authenticated session).
-      fetch('/api/tickets/mine')
-        .then((res) => {
-          if (!res.ok) return null;
-          const ct = res.headers.get('content-type');
-          return ct && ct.includes('application/json') ? res.json() : null;
-        })
-        .then((data) => {
-          if (data && data.tickets) {
-            setTickets(data.tickets);
-          }
-        })
-        .catch(() => {});
     }
   }, [user]);
-
-  const handleCreateTicket = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!ticketSubject.trim() || !ticketMessage.trim()) return;
-
-    try {
-      setIsSubmittingTicket(true);
-      const res = await fetch('/api/tickets', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          customerName: user?.name || 'Customer',
-          customerEmail: user?.email || 'customer@gmail.com',
-          customerPhone: user?.phone || '+254 700 000 000',
-          subject: ticketSubject.trim(),
-          category: ticketCategory,
-          message: ticketMessage.trim()
-        })
-      });
-      const data = await res.json();
-      if (data.success && data.ticket) {
-        setTickets([data.ticket, ...tickets]);
-        showToast(`Support Ticket ${data.ticket.ticketNumber} created!`, 'success');
-        setTicketSubject('');
-        setTicketMessage('');
-      }
-    } catch (e) {
-      showToast('Could not create support ticket', 'error');
-    } finally {
-      setIsSubmittingTicket(false);
-    }
-  };
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-950 text-slate-100 selection:bg-cyan-600 selection:text-white">
@@ -142,7 +92,7 @@ export const CustomerDashboardPage: React.FC = () => {
             />
             <div>
               <div className="text-xs text-slate-400">Welcome Back,</div>
-              <h1 className="text-xl sm:text-2xl font-black text-white">{user?.name || 'Dennis Mwangi'}</h1>
+              <h1 className="text-xl sm:text-2xl font-black text-white">{user?.name || 'My account'}</h1>
               <div className="text-xs text-cyan-400 font-mono">{user?.email}</div>
             </div>
           </div>
@@ -170,13 +120,16 @@ export const CustomerDashboardPage: React.FC = () => {
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
           {/* Left Navigation Sidebar */}
           <aside className="lg:col-span-3 space-y-2">
-            <div className="bg-slate-900 border border-slate-800 rounded-3xl p-3 space-y-1 shadow-xl">
+            {/* Phones/tablets: a horizontally scrollable tab strip; desktop: a vertical menu. */}
+            <nav aria-label="Account sections" className="bg-slate-900 border border-slate-800 rounded-3xl p-2 lg:p-3 flex gap-1 overflow-x-auto scrollbar-none lg:block lg:space-y-1 shadow-xl">
               {[
                 { id: 'orders', label: 'My Orders & Deliveries', icon: Package, count: orders.length },
                 { id: 'wishlist', label: 'Saved Wishlist', icon: Heart, count: wishlist.length },
-                { id: 'addresses', label: 'Saved Addresses', icon: MapPin },
-                { id: 'tickets', label: 'Support & Inquiries', icon: HelpCircle, count: tickets.length },
-                { id: 'settings', label: 'Account Profile', icon: UserIcon }
+                { id: 'addresses', label: 'Delivery Location', icon: MapPin },
+                { id: 'referrals', label: 'Referrals & Rewards', icon: Gift },
+                { id: 'reviews', label: 'My Reviews', icon: Star },
+                { id: 'tickets', label: 'Support & Inquiries', icon: HelpCircle, count: openTicketCount },
+                { id: 'settings', label: 'My Profile', icon: UserIcon }
               ].map((tab) => {
                 const Icon = tab.icon;
                 const isActive = activeTab === tab.id;
@@ -185,7 +138,8 @@ export const CustomerDashboardPage: React.FC = () => {
                     key={tab.id}
                     type="button"
                     onClick={() => setActiveTab(tab.id as any)}
-                    className={`w-full flex items-center justify-between p-3 rounded-2xl text-xs font-bold transition-all ${
+                    aria-current={isActive ? 'page' : undefined}
+                    className={`shrink-0 lg:w-full flex items-center justify-between gap-3 p-3 rounded-2xl text-xs font-bold transition-all whitespace-nowrap ${
                       isActive
                         ? 'bg-cyan-600 text-white shadow-lg shadow-cyan-600/30'
                         : 'text-slate-300 hover:bg-slate-800 hover:text-white'
@@ -207,7 +161,7 @@ export const CustomerDashboardPage: React.FC = () => {
                   </button>
                 );
               })}
-            </div>
+            </nav>
           </aside>
 
           {/* Right Main Content Panel */}
@@ -349,188 +303,26 @@ export const CustomerDashboardPage: React.FC = () => {
 
             {/* TAB 3: ADDRESSES */}
             {activeTab === 'addresses' && (
-              <div className="space-y-4 animate-in fade-in duration-200">
-                <div className="flex items-center justify-between pb-3 border-b border-slate-800">
-                  <h2 className="text-lg font-bold text-white">Saved Delivery Addresses</h2>
+              <div className="space-y-4 animate-fadeInUp">
+                <div className="pb-3 border-b border-slate-800">
+                  <h2 className="text-lg font-bold text-white">Delivery location</h2>
+                  <p className="text-sm text-slate-400">Used to pre-fill checkout and price delivery by distance.</p>
                 </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="bg-slate-900 border border-cyan-500/50 rounded-2xl p-5 space-y-2 text-xs relative shadow-lg">
-                    <span className="px-2 py-0.5 bg-cyan-950 text-cyan-400 font-bold rounded text-[10px] uppercase border border-cyan-800">
-                      Default Shipping Address
-                    </span>
-                    <div className="font-bold text-white text-sm pt-1">Dennis Mwangi</div>
-                    <div className="text-slate-300">Silverstone Towers, 4th Floor Apt 4B</div>
-                    <div className="text-slate-300">Argwings Kodhek Road, Kilimani</div>
-                    <div className="text-cyan-300 font-semibold">Nairobi County, Kenya</div>
-                    <div className="text-slate-400 font-mono pt-1">+254 759 508 348</div>
-                  </div>
+                <div className="card card-pad space-y-5">
+                  <LocationPicker value={location} onChange={setLocation} />
+                  <button type="button" onClick={saveLocation} disabled={savingLocation} className="btn btn-primary">{savingLocation ? 'Saving…' : 'Save location'}</button>
                 </div>
               </div>
             )}
+
+            {activeTab === 'referrals' && <ReferralPanel />}
+            {activeTab === 'reviews' && <MyReviewsPanel />}
 
             {/* TAB 4: SUPPORT TICKETS */}
-            {activeTab === 'tickets' && (
-              <div className="space-y-6 animate-in fade-in duration-200">
-                <div className="flex items-center justify-between pb-3 border-b border-slate-800">
-                  <h2 className="text-lg font-bold text-white">Support Inquiries & Tickets</h2>
-                </div>
+            {activeTab === 'tickets' && <SupportTicketsPanel orders={orders} onCountChange={setOpenTicketCount} />}
 
-                {/* Create Ticket Form */}
-                <form onSubmit={handleCreateTicket} className="bg-slate-900 border border-slate-800 rounded-3xl p-6 space-y-4 text-xs">
-                  <h3 className="font-bold text-white text-sm">Open a New Support Ticket</h3>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-slate-400 mb-1">Inquiry Category:</label>
-                      <select
-                        value={ticketCategory}
-                        onChange={(e) => setTicketCategory(e.target.value)}
-                        className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-white"
-                      >
-                        <option value="Product Compatibility">Product Compatibility</option>
-                        <option value="Order & Delivery Status">Order & Delivery Status</option>
-                        <option value="Warranty Claim">Warranty Claim</option>
-                        <option value="Custom PC Assembly">Custom PC Assembly</option>
-                        <option value="Payment / M-Pesa Inquiry">Payment / M-Pesa Inquiry</option>
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="block text-slate-400 mb-1">Subject:</label>
-                      <input
-                        type="text"
-                        value={ticketSubject}
-                        onChange={(e) => setTicketSubject(e.target.value)}
-                        placeholder="e.g. Compatibility check for RTX 4090 PSU"
-                        className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-white"
-                        required
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-slate-400 mb-1">Message:</label>
-                    <textarea
-                      rows={3}
-                      value={ticketMessage}
-                      onChange={(e) => setTicketMessage(e.target.value)}
-                      placeholder="Describe your inquiry in detail..."
-                      className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-white resize-none"
-                      required
-                    />
-                  </div>
-
-                  <button
-                    type="submit"
-                    disabled={isSubmittingTicket}
-                    className="px-6 py-2.5 bg-cyan-600 hover:bg-cyan-500 text-white font-bold rounded-xl flex items-center gap-2 shadow"
-                  >
-                    <Send className="w-3.5 h-3.5" />
-                    <span>Submit Support Ticket</span>
-                  </button>
-                </form>
-
-                {/* Existing Tickets List */}
-                <div className="space-y-3">
-                  {tickets.map((t) => (
-                    <div key={t.id} className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-3 text-xs">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <span className="font-mono font-bold text-cyan-400">{t.ticketNumber}</span>
-                          <span className="font-bold text-white">{t.subject}</span>
-                        </div>
-                        <span className="px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-400 font-bold border border-emerald-800">
-                          {t.status}
-                        </span>
-                      </div>
-
-                      {/* Messages thread */}
-                      <div className="space-y-2 pt-2 border-t border-slate-800">
-                        {t.messages.map((m, idx) => (
-                          <div
-                            key={idx}
-                            className={`p-3 rounded-xl ${
-                              m.sender === 'staff' ? 'bg-cyan-950/50 border border-cyan-800/40 text-cyan-100' : 'bg-slate-950 text-slate-300'
-                            }`}
-                          >
-                            <div className="font-bold text-[11px] mb-0.5">
-                              {m.sender === 'staff' ? '👨‍💻 Internext Specialist' : '👤 You'}
-                            </div>
-                            <p>{m.text}</p>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* TAB 5: PROFILE SETTINGS */}
-            {activeTab === 'settings' && (
-              <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8 space-y-5 text-xs animate-in fade-in duration-200">
-                <h3 className="text-base font-bold text-white">Account Settings & Security</h3>
-                {referralSummary && <section className="rounded-2xl border border-cyan-800/40 bg-cyan-950/20 p-4 space-y-3">
-                  <div className="flex items-center gap-2"><Gift className="w-4 h-4 text-cyan-400" /><h4 className="font-bold text-white">Your referral rewards</h4></div>
-                  <p className="text-slate-400">Share your code. Rewards are based on verified referrals.</p>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <code className="rounded-lg bg-slate-950 border border-slate-800 px-3 py-2 font-mono text-sm tracking-wider text-cyan-300">{referralSummary.referralCode}</code>
-                    <button type="button" onClick={() => navigator.clipboard?.writeText(`${window.location.origin}/auth?ref=${referralSummary.referralCode}`)} className="inline-flex items-center gap-1.5 rounded-lg bg-slate-800 px-3 py-2 text-slate-200" aria-label="Copy referral link"><Copy className="w-3.5 h-3.5" /> Copy link</button>
-                    <span className="text-slate-400">{referralSummary.totalReferrals} joined · {referralSummary.verifiedReferrals} verified</span>
-                  </div>
-                  {referralSummary.rewards.length > 0 && <div className="space-y-1.5"><p className="font-semibold text-slate-300">Referral reward codes</p>{referralSummary.rewards.map((reward) => <div key={reward.couponCode} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-slate-950/70 px-3 py-2"><code className={`font-mono ${reward.usedCount ? 'text-slate-500 line-through' : 'text-emerald-300'}`}>{reward.couponCode}</code><span className="text-slate-500">{reward.usedCount ? 'Redeemed' : `Earned at ${reward.referralCount} verified referrals`}</span></div>)}</div>}
-                </section>}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-slate-400 mb-1">Full Name:</label>
-                    <input
-                      type="text"
-                      value={profileName}
-                      onChange={(e) => setProfileName(e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-white"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-slate-400 mb-1">Email Address:</label>
-                    <input
-                      type="email"
-                      defaultValue={user?.email}
-                      disabled
-                      className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-slate-400 cursor-not-allowed"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-slate-400 mb-1">Phone Number:</label>
-                    <input
-                      type="text"
-                      value={profilePhone}
-                      onChange={(e) => setProfilePhone(e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-white font-mono"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-slate-400 mb-1">Role Permission:</label>
-                    <input
-                      type="text"
-                      defaultValue={user?.role}
-                      disabled
-                      className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-cyan-400 uppercase font-bold cursor-not-allowed"
-                    />
-                  </div>
-                </div>
-
-                <div className="pt-4 border-t border-slate-800 flex justify-end">
-                  <button
-                    type="button"
-                    onClick={handleSaveProfile}
-                    disabled={savingProfile}
-                    className="px-6 py-2.5 bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 text-white font-bold rounded-xl shadow transition-colors"
-                  >
-                    {savingProfile ? 'Saving…' : 'Save Changes'}
-                  </button>
-                </div>
-              </div>
-            )}
+            {/* TAB 5: PROFILE */}
+            {activeTab === 'settings' && <ProfilePanel />}
           </main>
         </div>
       </div>

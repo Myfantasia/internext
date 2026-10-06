@@ -4,6 +4,7 @@ process.env.VERCEL = '1';
 
 const { default: request } = await import('supertest');
 const { default: app } = await import('../index.js');
+const { registerAndLogin } = await import('./helpers.js');
 
 const suffix = Date.now();
 const customer = { email: `test-cart-${suffix}@example.com`, password: 'StrongPass1', name: 'Cart Tester' };
@@ -11,10 +12,7 @@ let customerCookie;
 let productId;
 let productSlug;
 
-function extractCookie(res) {
-  const raw = res.headers['set-cookie'];
-  return Array.isArray(raw) ? raw.map((c) => c.split(';')[0]).join('; ') : undefined;
-}
+let productStock;
 
 describe('Catalog — non-UUID identifier lookups must not crash', () => {
   beforeAll(async () => {
@@ -48,6 +46,29 @@ describe('Catalog — non-UUID identifier lookups must not crash', () => {
   });
 });
 
+describe('Search', () => {
+  it('finds products by partial name and ignores tsquery syntax characters', async () => {
+    const res = await request(app).get(`/api/products?search=${encodeURIComponent("lap & | ! ( top")}`);
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body.products)).toBe(true);
+  });
+});
+
+describe('Delivery pricing', () => {
+  it('quotes delivery by distance from a pinned location', async () => {
+    const res = await request(app).post('/api/delivery/quote').send({ mode: 'distance', coordinates: { lat: -1.2676, lng: 36.8108 }, county: 'Nairobi', subtotal: 1000 });
+    expect(res.status).toBe(200);
+    expect(res.body.quote.distanceKm).toBeGreaterThan(0);
+    expect(res.body.quote.estimated).toBe(false);
+  });
+
+  it('rejects coordinates outside Kenya and falls back to the county estimate', async () => {
+    const res = await request(app).post('/api/delivery/quote').send({ mode: 'distance', coordinates: { lat: 51.5, lng: -0.12 }, county: 'Kisumu', subtotal: 1000 });
+    expect(res.status).toBe(200);
+    expect(res.body.quote.estimated).toBe(true);
+  });
+});
+
 describe('Orders — tracking by order number (non-UUID) must not crash', () => {
   it('404s (not 500) for a nonexistent order number', async () => {
     const res = await request(app).get('/api/orders/ORD-9999-999999');
@@ -57,10 +78,10 @@ describe('Orders — tracking by order number (non-UUID) must not crash', () => 
 
 describe('Cart — DB-backed, stock-validated', () => {
   beforeAll(async () => {
-    const res = await request(app).post('/api/auth/register').send(customer);
-    customerCookie = extractCookie(res);
+    ({ cookie: customerCookie } = await registerAndLogin(request, app, customer));
     const products = await request(app).get('/api/products?limit=1');
     productId = products.body.products[0].id;
+    productStock = products.body.products[0].stock;
   });
 
   it('requires authentication', async () => {
@@ -75,7 +96,7 @@ describe('Cart — DB-backed, stock-validated', () => {
   });
 
   it('rejects a quantity beyond available stock', async () => {
-    const res = await request(app).put('/api/cart/items').set('Cookie', customerCookie).send({ productId, quantity: 999999 });
+    const res = await request(app).put('/api/cart/items').set('Cookie', customerCookie).send({ productId, quantity: Math.min(productStock + 1, 10000) });
     expect(res.status).toBe(409);
   });
 

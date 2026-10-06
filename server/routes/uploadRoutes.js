@@ -1,60 +1,58 @@
 import express from 'express';
-import fs from 'fs';
 import path from 'path';
-import { randomUUID } from 'crypto';
-import { fileURLToPath } from 'url';
 import multer from 'multer';
-import { requireRole } from '../middleware/authorize.js';
+import rateLimit from 'express-rate-limit';
+import { requireRole, requireAuth } from '../middleware/authorize.js';
+import { saveImage, StorageError, MAX_UPLOAD_BYTES } from '../services/storage.js';
 
 const router = express.Router();
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-export const uploadsDir = path.join(__dirname, '../../uploads');
-
-fs.mkdirSync(uploadsDir, { recursive: true });
 
 const ALLOWED_MIME = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
 const ALLOWED_EXT = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif']);
 
-const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, uploadsDir),
-  filename: (_req, file, cb) => {
-    const ext = path.extname(file.originalname || '').toLowerCase();
-    const safeExt = ALLOWED_EXT.has(ext) ? ext : '.jpg';
-    cb(null, `${randomUUID()}${safeExt}`);
+// Files are held in memory and handed to the storage service (local disk or
+// Vercel Blob), which also checks the actual bytes are an image.
+function imageFileFilter(_req, file, cb) {
+  const ext = path.extname(file.originalname || '').toLowerCase();
+  if (ALLOWED_MIME.has(file.mimetype) && (ALLOWED_EXT.has(ext) || !ext)) {
+    return cb(null, true);
   }
-});
+  cb(new Error('Only JPEG, PNG, WebP, and GIF images are allowed'));
+}
 
-const upload = multer({
-  storage,
-  limits: { fileSize: 8 * 1024 * 1024 },
-  fileFilter: (_req, file, cb) => {
-    const ext = path.extname(file.originalname || '').toLowerCase();
-    if (ALLOWED_MIME.has(file.mimetype) && (ALLOWED_EXT.has(ext) || !ext)) {
-      return cb(null, true);
-    }
-    cb(new Error('Only JPEG, PNG, WebP, and GIF images are allowed'));
-  }
-});
+const mb = (bytes) => `${Math.round(bytes / (1024 * 1024))} MB`;
 
-router.post('/image', requireRole('ADMIN', 'SALES_MANAGER'), (req, res) => {
-  upload.single('image')(req, res, (err) => {
-    if (err) {
-      const message = err.code === 'LIMIT_FILE_SIZE'
-        ? 'Image must be 8 MB or smaller'
-        : err.message || 'Upload failed';
-      return res.status(400).json({ success: false, message });
-    }
-    if (!req.file) {
-      return res.status(400).json({ success: false, message: 'Please choose an image file to upload' });
-    }
-    res.status(201).json({
-      success: true,
-      url: `/uploads/${req.file.filename}`,
-      filename: req.file.filename
+function uploadHandler({ maxBytes, folder, tooBig }) {
+  const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: maxBytes, files: 1 }, fileFilter: imageFileFilter });
+  return (req, res) => {
+    upload.single('image')(req, res, async (err) => {
+      if (err) {
+        const message = err.code === 'LIMIT_FILE_SIZE' ? tooBig : err.message || 'Upload failed';
+        return res.status(400).json({ success: false, message });
+      }
+      if (!req.file) return res.status(400).json({ success: false, message: 'Please choose an image file to upload' });
+      try {
+        const url = await saveImage(req.file.buffer, { folder });
+        res.status(201).json({ success: true, url });
+      } catch (e) {
+        if (e instanceof StorageError) return res.status(e.message.startsWith('That file') ? 400 : 503).json({ success: false, message: e.message });
+        console.error('[uploads] save failed:', e);
+        res.status(502).json({ success: false, message: 'Could not store the image. Please try again.' });
+      }
     });
-  });
-});
+  };
+}
+
+router.post('/image', requireRole('ADMIN', 'SALES_MANAGER'), uploadHandler({
+  maxBytes: MAX_UPLOAD_BYTES, folder: 'catalog', tooBig: `Image must be ${mb(MAX_UPLOAD_BYTES)} or smaller`
+}));
+
+// Profile photos: any signed-in user (customers and staff), smaller limit.
+const avatarLimiter = rateLimit({ windowMs: 60 * 60 * 1000, limit: 20, standardHeaders: true, legacyHeaders: false,
+  message: { success: false, message: 'Too many uploads. Please try again later.' } });
+
+router.post('/avatar', requireAuth, avatarLimiter, uploadHandler({
+  maxBytes: 3 * 1024 * 1024, folder: 'avatars', tooBig: 'Profile photos must be 3 MB or smaller'
+}));
 
 export default router;

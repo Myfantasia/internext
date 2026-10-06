@@ -1,6 +1,7 @@
 import { eq, sql, count } from 'drizzle-orm';
 import { db } from '../db/client.js';
 import { users } from '../db/schema.js';
+import { parseCoordinates } from '../services/location.js';
 
 export const SAFE_USER_COLUMNS = {
   id: users.id,
@@ -18,8 +19,37 @@ export const SAFE_USER_COLUMNS = {
 
 export function toSafeUser(row) {
   if (!row) return null;
-  const { passwordHash, failedLoginAttempts, lockedUntil, updatedAt, avatarUrl, ...safe } = row;
-  return { ...safe, avatar: avatarUrl };
+  const {
+    passwordHash, failedLoginAttempts, lockedUntil, updatedAt, avatarUrl,
+    referralCode, referredBy, county, town, addressLine, locationLat, locationLng, locationSource,
+    ...safe
+  } = row;
+  return {
+    ...safe,
+    avatar: avatarUrl,
+    location: county ? {
+      county,
+      town,
+      addressLine,
+      lat: locationLat != null ? Number(locationLat) : null,
+      lng: locationLng != null ? Number(locationLng) : null,
+      source: locationSource
+    } : null
+  };
+}
+
+// Maps validated location input (schemas/authSchemas.js locationSchema) to columns.
+export function locationColumns(location) {
+  if (!location) return {};
+  const coords = parseCoordinates({ lat: location.lat, lng: location.lng });
+  return {
+    county: location.county,
+    town: location.town,
+    addressLine: location.addressLine || null,
+    locationLat: coords ? String(coords.lat) : null,
+    locationLng: coords ? String(coords.lng) : null,
+    locationSource: coords ? (location.source === 'gps' ? 'gps' : 'map') : 'manual'
+  };
 }
 
 export async function findUserByEmail(email) {
@@ -27,31 +57,52 @@ export async function findUserByEmail(email) {
   return row || null;
 }
 
+// Phones are stored normalized (2547XXXXXXXX) so "0712…" and "+254 712…" match.
+export async function findUserByPhone(phone) {
+  if (!phone) return null;
+  const [row] = await db.select().from(users).where(eq(users.phone, phone)).limit(1);
+  return row || null;
+}
+
+// Maps a Postgres unique violation on users to the field that clashed, so a
+// race between two signups still produces a clear message. Drizzle may wrap
+// the driver error, hence the `cause` check.
+export function duplicateUserField(err) {
+  const e = err?.code === '23505' ? err : err?.cause?.code === '23505' ? err.cause : null;
+  if (!e) return null;
+  const name = e.constraint_name || e.constraint || '';
+  if (name.includes('phone')) return 'phone';
+  if (name.includes('email')) return 'email';
+  return 'unknown';
+}
+
 export async function findUserById(id) {
   const [row] = await db.select().from(users).where(eq(users.id, id)).limit(1);
   return row || null;
 }
 
-export async function findUserByReferralCode(referralCode) {
-  const [row] = await db.select().from(users).where(eq(users.referralCode, referralCode.trim().toUpperCase())).limit(1);
-  return row || null;
-}
-
-export async function createUser({ name, email, phone, passwordHash, role = 'CUSTOMER', referredBy = null }) {
-  const [row] = await db
+export async function createUser({ name, email, phone, passwordHash, role = 'CUSTOMER', referredBy = null, location = null }, tx = db) {
+  const [row] = await tx
     .insert(users)
-    .values({ name, email: email.toLowerCase(), phone, passwordHash, role, referredBy })
+    .values({ name, email: email.toLowerCase(), phone, passwordHash, role, referredBy, ...locationColumns(location) })
     .returning();
   return row;
 }
 
-export async function updateUserProfile(id, { name, phone, avatar, addresses }) {
-  const patch = { updatedAt: new Date() };
+export async function updateUserProfile(id, { name, phone, avatar, addresses, location }) {
+  const patch = { updatedAt: new Date(), ...locationColumns(location) };
   if (name !== undefined) patch.name = name;
   if (phone !== undefined) patch.phone = phone;
   if (avatar !== undefined) patch.avatarUrl = avatar;
   if (addresses !== undefined) patch.addresses = addresses;
   const [row] = await db.update(users).set(patch).where(eq(users.id, id)).returning();
+  return row;
+}
+
+// A new address must be proven again, so verification is reset.
+export async function updateUserEmail(id, email) {
+  const [row] = await db.update(users).set({ email: email.toLowerCase(), emailVerifiedAt: null, updatedAt: new Date() })
+    .where(eq(users.id, id)).returning();
   return row;
 }
 

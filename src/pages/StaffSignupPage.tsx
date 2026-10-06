@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { ArrowRight, BriefcaseBusiness, KeyRound, Loader2, Mail, Phone, ShieldCheck, UserRound } from 'lucide-react';
+import { ArrowRight, BriefcaseBusiness, KeyRound, Loader2, Mail, Phone, UserRound } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { PasswordInput } from '../components/forms/PasswordInput';
+import { navigate } from '../utils/navigation';
 
 export const StaffSignupPage: React.FC = () => {
   const { registerStaff } = useAuth();
@@ -10,8 +12,8 @@ export const StaffSignupPage: React.FC = () => {
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [invitationCode, setInvitationCode] = useState('');
-  const [referralCode, setReferralCode] = useState(new URLSearchParams(window.location.search).get('ref')?.toUpperCase() || '');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -32,15 +34,21 @@ export const StaffSignupPage: React.FC = () => {
       setError('Use at least 10 characters, including uppercase, lowercase, and a number.');
       return;
     }
+    if (password !== confirmPassword) {
+      setError('The two passwords do not match.');
+      return;
+    }
     if (!firstAdminAvailable && !invitationCode.trim()) {
       setError('Enter the single-use signup code provided by an administrator.');
       return;
     }
     setLoading(true);
-    const result = await registerStaff(name.trim(), email.trim(), phone.trim(), password, invitationCode.trim() || undefined, referralCode.trim() || undefined);
+    const result = await registerStaff(name.trim(), email.trim(), phone.trim(), password, invitationCode.trim() || undefined);
     setLoading(false);
     if (!result.success) { setError(result.message || 'Unable to create this staff account.'); return; }
-    window.location.href = '/admin';
+    // Accounts are created signed-out: the new staff member signs in explicitly.
+    try { sessionStorage.setItem('ibs-registered-email', email.trim()); } catch { /* storage unavailable */ }
+    navigate('/admin/login?registered=1');
   };
 
   return <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col">
@@ -64,9 +72,27 @@ export const StaffSignupPage: React.FC = () => {
           {firstAdminAvailable === false && <div className="relative"><KeyRound className="absolute left-3.5 top-3.5 h-4 w-4 text-slate-500" /><input value={invitationCode} onChange={(e) => setInvitationCode(e.target.value.toUpperCase())} className="w-full rounded-xl border border-slate-700 bg-slate-950 py-3 pl-10 pr-3 font-mono text-sm tracking-wider text-white" placeholder="IBS-XXXX-XXXX-XXXX" required autoComplete="one-time-code" /></div>}
           <div className="relative"><UserRound className="absolute left-3.5 top-3.5 h-4 w-4 text-slate-500" /><input value={name} onChange={(e) => setName(e.target.value)} className="w-full rounded-xl border border-slate-700 bg-slate-950 py-3 pl-10 pr-3 text-sm text-white" placeholder="Full name" minLength={2} required /></div>
           <div className="relative"><Mail className="absolute left-3.5 top-3.5 h-4 w-4 text-slate-500" /><input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="w-full rounded-xl border border-slate-700 bg-slate-950 py-3 pl-10 pr-3 text-sm text-white" placeholder="Work email" required autoComplete="email" /></div>
-          <div className="relative"><Phone className="absolute left-3.5 top-3.5 h-4 w-4 text-slate-500" /><input type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} className="w-full rounded-xl border border-slate-700 bg-slate-950 py-3 pl-10 pr-3 text-sm text-white" placeholder="Phone (optional)" /></div>
-          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-3 text-sm text-white" placeholder="Password (10+ characters)" required autoComplete="new-password" />
-          <div className="relative"><ShieldCheck className="absolute left-3.5 top-3.5 h-4 w-4 text-slate-500" /><input value={referralCode} onChange={(e) => setReferralCode(e.target.value.toUpperCase())} className="w-full rounded-xl border border-slate-700 bg-slate-950 py-3 pl-10 pr-3 font-mono text-sm text-white" placeholder="Referral code (optional)" /></div>
+          <div className="relative"><Phone className="absolute left-3.5 top-3.5 h-4 w-4 text-slate-500" /><input type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} className="w-full rounded-xl border border-slate-700 bg-slate-950 py-3 pl-10 pr-3 text-sm text-white" placeholder="Phone (optional, e.g. 0712 345 678)" autoComplete="tel" /></div>
+          <PasswordInput
+            label="New password"
+            toggleLabel="new password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            placeholder="At least 10 characters"
+            hint="10+ characters with upper & lower case and a number"
+            required
+            autoComplete="new-password"
+          />
+          <PasswordInput
+            label="Confirm password"
+            toggleLabel="password confirmation"
+            value={confirmPassword}
+            onChange={(e) => setConfirmPassword(e.target.value)}
+            placeholder="Re-enter the password"
+            error={confirmPassword && password !== confirmPassword ? 'Passwords do not match' : undefined}
+            required
+            autoComplete="new-password"
+          />
           <button type="submit" disabled={loading || firstAdminAvailable === null} className="flex w-full items-center justify-center gap-2 rounded-xl bg-cyan-600 py-3.5 text-sm font-bold text-white hover:bg-cyan-500 disabled:opacity-50">
             {loading ? <><Loader2 className="h-4 w-4 animate-spin" /> Creating account…</> : <>Create staff account <ArrowRight className="h-4 w-4" /></>}
           </button>

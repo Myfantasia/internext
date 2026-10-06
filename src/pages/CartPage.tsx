@@ -26,11 +26,10 @@ export const CartPage: React.FC = () => {
     cartCount,
     subtotal,
     discountAmount,
-    deliveryFee,
+    taxAmount,
+    taxRate,
     total,
     appliedCoupon,
-    selectedDeliveryZoneId,
-    setSelectedDeliveryZoneId,
     updateQuantity,
     removeFromCart,
     clearCart,
@@ -38,7 +37,7 @@ export const CartPage: React.FC = () => {
     removeCoupon
   } = useCart();
 
-  const { formatPrice, deliveryZones, settings } = useStore();
+  const { formatPrice, settings } = useStore();
   const [couponInput, setCouponInput] = useState('');
   const [isApplyingCoupon, setIsApplyingCoupon] = useState(false);
 
@@ -205,23 +204,10 @@ export const CartPage: React.FC = () => {
               <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-xl space-y-5">
                 <h3 className="text-base font-extrabold text-white">Order Summary</h3>
 
-                {/* Delivery Zone Selector */}
-                <div className="space-y-2 text-xs">
-                  <label className="font-bold text-slate-300 flex items-center gap-1.5">
-                    <MapPin className="w-4 h-4 text-cyan-400" />
-                    <span>Select Destination Region / Delivery Zone:</span>
-                  </label>
-                  <select
-                    value={selectedDeliveryZoneId}
-                    onChange={(e) => setSelectedDeliveryZoneId(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs text-white focus:outline-none focus:border-cyan-500"
-                  >
-                    {deliveryZones.map((z) => (
-                      <option key={z.id} value={z.id}>
-                        {z.name} — {z.fee === 0 ? 'FREE' : formatPrice(z.fee)} ({z.estimatedTime})
-                      </option>
-                    ))}
-                  </select>
+                {/* Delivery is priced from the customer's location at checkout */}
+                <div className="flex items-start gap-2 rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-xs text-slate-300">
+                  <MapPin className="w-4 h-4 text-cyan-400 shrink-0 mt-0.5" />
+                  <span>Delivery is calculated at checkout from your delivery location (distance from our Nairobi office). Free store pickup is also available.</span>
                 </div>
 
                 {/* Promo Voucher Code */}
@@ -273,23 +259,17 @@ export const CartPage: React.FC = () => {
                   )}
 
                   <div className="flex justify-between">
-                    <span>Courier / Delivery Fee:</span>
-                    <span className="font-bold text-white">
-                      {deliveryFee === 0 ? (
-                        <span className="text-emerald-400 font-bold">FREE DELIVERY</span>
-                      ) : (
-                        formatPrice(deliveryFee)
-                      )}
-                    </span>
+                    <span>Delivery:</span>
+                    <span className="font-semibold text-slate-400">Calculated at checkout</span>
                   </div>
 
                   <div className="flex justify-between text-[11px] text-slate-400">
-                    <span>Kenya VAT (16% Included):</span>
-                    <span>{formatPrice(Math.round((subtotal * 16) / 116))}</span>
+                    <span>VAT ({taxRate}% included):</span>
+                    <span>{formatPrice(taxAmount)}</span>
                   </div>
 
                   <div className="flex justify-between text-lg font-black text-white pt-3 border-t border-slate-800">
-                    <span>Estimated Total:</span>
+                    <span>Total before delivery:</span>
                     <span className="text-cyan-400">{formatPrice(total)}</span>
                   </div>
                 </div>

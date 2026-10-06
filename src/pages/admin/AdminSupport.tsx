@@ -1,180 +1,180 @@
-import React, { useState, useEffect } from 'react';
-import { HelpCircle, Send, CheckCircle2, MessageCircle, Clock, User } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { HelpCircle, Send, Search, RefreshCw, Package, UserCheck, Loader2 } from 'lucide-react';
 import { useToast } from '../../context/ToastContext';
 import { SupportTicket } from '../../types';
+import { api, PageHeader, LoadingBlock, EmptyState, fmtDateTime } from './adminUi';
 
-const defaultTickets: SupportTicket[] = [
-  {
-    id: 't-1',
-    ticketNumber: 'TCK-8812',
-    customerName: 'Dennis Mwangi',
-    customerEmail: 'dennis.mwangi@gmail.com',
-    customerPhone: '+254 759 508 348',
-    subject: 'Warranty registration for MacBook Pro M3',
-    category: 'Warranty',
-    status: 'Open',
-    priority: 'high',
-    assignedTo: 'Support Team',
-    messages: [
-      {
-        sender: 'customer',
-        text: 'Hi, I received my MacBook Pro M3 Max today. How do I register the 1-year AppleCare warranty?',
-        timestamp: '2026-08-27T10:15:00Z'
-      },
-      {
-        sender: 'staff',
-        staffName: 'Support Agent',
-        text: 'Hello Dennis, your warranty was auto-registered with Apple East Africa upon dispatch. The serial number is active in Apple Support.',
-        timestamp: '2026-08-27T10:30:00Z'
-      }
-    ],
-    createdAt: '2026-08-27T10:15:00Z'
-  }
-];
+const STATUSES = ['Open', 'In Progress', 'Resolved', 'Closed'] as const;
+const PRIORITIES = ['Low', 'Normal', 'High', 'Urgent'];
+const STATUS_STYLE: Record<string, string> = { Open: 'badge-warning', 'In Progress': 'badge-info', Resolved: 'badge-success', Closed: 'badge-neutral' };
+const PRIORITY_STYLE: Record<string, string> = { Urgent: 'badge-danger', High: 'badge-warning', Normal: 'badge-neutral', Low: 'badge-neutral' };
 
 export const AdminSupport: React.FC = () => {
   const { showToast } = useToast();
-  const [tickets, setTickets] = useState<SupportTicket[]>(defaultTickets);
-  const [selectedTicket, setSelectedTicket] = useState<SupportTicket | null>(defaultTickets[0]);
-  const [replyText, setReplyText] = useState('');
+  const [tickets, setTickets] = useState<SupportTicket[] | null>(null);
+  const [counts, setCounts] = useState<Record<string, number>>({});
+  const [filter, setFilter] = useState<string>('needs-reply');
+  const [search, setSearch] = useState('');
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [reply, setReply] = useState('');
+  const [replyStatus, setReplyStatus] = useState('');
+  const [busy, setBusy] = useState(false);
 
-  const fetchTickets = () => {
-    fetch('/api/tickets')
-      .then((res) => {
-        if (!res.ok) return null;
-        const ct = res.headers.get('content-type');
-        return ct && ct.includes('application/json') ? res.json() : null;
-      })
-      .then((data) => {
-        if (data && data.tickets && data.tickets.length > 0) {
-          setTickets(data.tickets);
-          if (!selectedTicket) setSelectedTicket(data.tickets[0]);
-        }
-      })
-      .catch(() => {});
-  };
-
-  useEffect(() => {
-    fetchTickets();
-  }, []);
-
-  const handleSendReply = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedTicket || !replyText.trim()) return;
-
+  const load = async () => {
+    const qs = new URLSearchParams();
+    if (filter === 'needs-reply') qs.set('awaiting', 'staff');
+    else if (filter !== 'all') qs.set('status', filter);
+    if (search.trim()) qs.set('search', search.trim());
     try {
-      const res = await fetch(`/api/tickets/${selectedTicket.id}/reply`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: replyText.trim() })
-      });
-      const data = await res.json();
-      if (data.success && data.ticket) {
-        showToast('Reply dispatched to customer!', 'success');
-        setSelectedTicket(data.ticket);
-        fetchTickets();
-        setReplyText('');
-      }
-    } catch (e) {
-      showToast('Error sending reply', 'error');
+      const data = await api<{ tickets: SupportTicket[]; counts: Record<string, number> }>(`/api/tickets?${qs}`);
+      // "Needs reply" hides closed tickets the customer happened to write last on.
+      const list = filter === 'needs-reply' ? data.tickets.filter((t) => t.status !== 'Closed') : data.tickets;
+      setTickets(list);
+      setCounts(data.counts || {});
+      if (!selectedId || !list.some((t) => t.id === selectedId)) setSelectedId(list[0]?.id || null);
+    } catch (e: any) {
+      showToast(e.message, 'error');
+      setTickets([]);
+    }
+  };
+  useEffect(() => { setTickets(null); load(); }, [filter]);
+
+  const selected = tickets?.find((t) => t.id === selectedId) || null;
+  const replaceTicket = (t: SupportTicket) => setTickets((prev) => (prev || []).map((x) => (x.id === t.id ? t : x)));
+
+  const sendReply = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selected || reply.trim().length < 2) return;
+    setBusy(true);
+    try {
+      const data = await api<{ ticket: SupportTicket }>(`/api/tickets/${selected.id}/reply`, { method: 'POST', body: { text: reply.trim(), status: replyStatus || undefined } });
+      replaceTicket(data.ticket);
+      setReply('');
+      setReplyStatus('');
+      showToast('Reply sent — the customer was emailed.', 'success');
+    } catch (err: any) {
+      showToast(err.message, 'error');
+    } finally {
+      setBusy(false);
     }
   };
 
-  return (
-    <div className="space-y-6 animate-in fade-in duration-200">
-      <div>
-        <h2 className="text-xl font-bold text-white">Support Inquiries & Ticket Resolution</h2>
-        <p className="text-xs text-slate-400">Manage customer pre-sales inquiries, compatibility questions, and warranty claims</p>
-      </div>
+  const patch = async (body: Record<string, unknown>) => {
+    if (!selected) return;
+    try {
+      const data = await api<{ ticket: SupportTicket }>(`/api/tickets/${selected.id}`, { method: 'PATCH', body });
+      replaceTicket(data.ticket);
+    } catch (err: any) {
+      showToast(err.message, 'error');
+    }
+  };
 
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Ticket List (4 Cols) */}
-        <div className="lg:col-span-5 bg-slate-900 border border-slate-800 rounded-3xl p-4 space-y-2 max-h-[600px] overflow-y-auto">
-          {tickets.map((t) => (
-            <button
-              key={t.id}
-              type="button"
-              onClick={() => setSelectedTicket(t)}
-              className={`w-full text-left p-3.5 rounded-2xl border transition-all text-xs space-y-1 ${
-                selectedTicket?.id === t.id
-                  ? 'bg-cyan-950/80 border-cyan-500 text-white shadow-lg'
-                  : 'bg-slate-950 border-slate-800 text-slate-300 hover:bg-slate-800'
-              }`}
-            >
-              <div className="flex items-center justify-between font-bold">
-                <span className="font-mono text-cyan-400">{t.ticketNumber}</span>
-                <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-400 border border-emerald-800">
-                  {t.status}
-                </span>
-              </div>
-              <div className="font-bold text-white truncate">{t.subject}</div>
-              <div className="text-[11px] text-slate-400 flex items-center justify-between pt-1">
-                <span>{t.customerName}</span>
-                <span>{new Date(t.createdAt).toLocaleDateString()}</span>
-              </div>
-            </button>
+  const tabs = [
+    { id: 'needs-reply', label: 'Needs reply' },
+    ...STATUSES.map((s) => ({ id: s, label: `${s}${counts[s] ? ` (${counts[s]})` : ''}` })),
+    { id: 'all', label: 'All' }
+  ];
+
+  return (
+    <div className="space-y-6 animate-fadeInUp">
+      <PageHeader
+        icon={HelpCircle}
+        title="Support tickets"
+        description="Tickets from My Account and the Contact page. Replies are emailed to the customer and appear in their account."
+        actions={<button type="button" onClick={load} className="btn btn-secondary"><RefreshCw className="w-4 h-4" />Refresh</button>}
+      />
+
+      <div className="flex flex-col lg:flex-row gap-3 lg:items-center justify-between">
+        <div className="flex gap-1.5 overflow-x-auto scrollbar-none">
+          {tabs.map((t) => (
+            <button key={t.id} type="button" onClick={() => setFilter(t.id)} className={`btn btn-sm shrink-0 ${filter === t.id ? 'btn-primary' : 'btn-ghost'}`}>{t.label}</button>
           ))}
         </div>
+        <form onSubmit={(e) => { e.preventDefault(); load(); }} className="relative lg:w-80">
+          <Search className="w-4 h-4 text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
+          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Ticket, customer, email or order…" className="field-input pl-10" />
+        </form>
+      </div>
 
-        {/* Conversation Thread & Reply (7 Cols) */}
-        <div className="lg:col-span-7 bg-slate-900 border border-slate-800 rounded-3xl p-6 flex flex-col justify-between space-y-6 min-h-[500px]">
-          {selectedTicket ? (
-            <>
-              {/* Header */}
-              <div className="border-b border-slate-800 pb-4 space-y-1">
-                <div className="flex items-center justify-between">
-                  <span className="font-mono text-xs font-bold text-cyan-400">{selectedTicket.ticketNumber}</span>
-                  <span className="text-xs text-slate-400 font-mono">{selectedTicket.customerEmail} • {selectedTicket.customerPhone}</span>
-                </div>
-                <h3 className="text-base font-bold text-white">{selectedTicket.subject}</h3>
-                <span className="inline-block text-[11px] px-2 py-0.5 rounded bg-slate-800 text-slate-300 font-semibold">
-                  Category: {selectedTicket.category}
-                </span>
-              </div>
-
-              {/* Messages Thread */}
-              <div className="flex-1 overflow-y-auto space-y-3 pr-2 text-xs">
-                {selectedTicket.messages.map((m, idx) => (
-                  <div
-                    key={idx}
-                    className={`p-3.5 rounded-2xl ${
-                      m.sender === 'staff'
-                        ? 'bg-cyan-950/60 border border-cyan-800/50 text-cyan-100 ml-6'
-                        : 'bg-slate-950 border border-slate-800 text-slate-300 mr-6'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between font-bold text-[11px] mb-1">
-                      <span>{m.sender === 'staff' ? '👨‍💻 Internext Support Specialist' : `👤 ${selectedTicket.customerName}`}</span>
-                      <span className="font-mono text-[10px] text-slate-400 font-normal">{new Date(m.timestamp).toLocaleTimeString()}</span>
-                    </div>
-                    <p className="leading-relaxed">{m.text}</p>
+      {!tickets ? <LoadingBlock /> : tickets.length === 0 ? (
+        <EmptyState title={filter === 'needs-reply' ? 'All caught up' : 'No tickets here'} text={filter === 'needs-reply' ? 'No customer is waiting for a reply.' : undefined} />
+      ) : (
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+          <ul className="lg:col-span-5 card p-2 space-y-1 lg:max-h-[calc(100dvh-14rem)] overflow-y-auto overscroll-contain lg:sticky lg:top-20">
+            {tickets.map((t) => (
+              <li key={t.id}>
+                <button type="button" onClick={() => setSelectedId(t.id)} aria-current={t.id === selectedId} className={`w-full text-left p-3 rounded-2xl border transition-colors space-y-1 ${t.id === selectedId ? 'border-cyan-600 bg-cyan-950/40' : 'border-transparent hover:bg-slate-800/50'}`}>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-mono text-xs font-bold text-cyan-400">{t.ticketNumber}</span>
+                    <span className={`badge ${STATUS_STYLE[t.status]}`}>{t.status}</span>
                   </div>
-                ))}
+                  <div className="font-semibold text-sm text-white truncate">{t.subject}</div>
+                  <div className="text-xs text-slate-400 flex justify-between gap-2">
+                    <span className="truncate">{t.customerName}</span>
+                    <span className="shrink-0">{fmtDateTime(t.lastMessageAt)}</span>
+                  </div>
+                  <div className="flex gap-1.5">
+                    {t.awaiting === 'staff' && t.status !== 'Closed' && <span className="badge badge-danger">Awaiting reply</span>}
+                    {t.priority !== 'Normal' && <span className={`badge ${PRIORITY_STYLE[t.priority] || 'badge-neutral'}`}>{t.priority}</span>}
+                  </div>
+                </button>
+              </li>
+            ))}
+          </ul>
+
+          {selected && (
+            <section className="lg:col-span-7 card flex flex-col">
+              <div className="p-5 border-b border-slate-800 space-y-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-mono text-sm font-bold text-cyan-400">{selected.ticketNumber}</span>
+                  <span className="badge badge-neutral">{selected.category}</span>
+                  {selected.orderNumber && <a href={`/track-order?order=${encodeURIComponent(selected.orderNumber)}`} target="_blank" rel="noreferrer" className="badge badge-info"><Package className="w-3 h-3" />{selected.orderNumber}</a>}
+                </div>
+                <h3 className="text-lg font-bold text-white break-words">{selected.subject}</h3>
+                <p className="text-sm text-slate-400 break-all">{selected.customerName} · {selected.customerEmail}{selected.customerPhone ? ` · ${selected.customerPhone}` : ''}{!selected.userId && ' · guest'}</p>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <label className="text-xs text-slate-400">Status
+                    <select value={selected.status} onChange={(e) => patch({ status: e.target.value })} className="field-input mt-1">{STATUSES.map((s) => <option key={s}>{s}</option>)}</select>
+                  </label>
+                  <label className="text-xs text-slate-400">Priority
+                    <select value={selected.priority} onChange={(e) => patch({ priority: e.target.value })} className="field-input mt-1">{PRIORITIES.map((p) => <option key={p}>{p}</option>)}</select>
+                  </label>
+                  <div className="text-xs text-slate-400">Assigned to
+                    <div className="mt-1 flex items-center gap-2">
+                      <span className="text-sm text-slate-200 truncate">{selected.assignedToName || 'Nobody'}</span>
+                      <button type="button" onClick={() => patch({ assignToMe: true })} className="btn btn-ghost btn-sm" title="Assign to me"><UserCheck className="w-4 h-4" /></button>
+                    </div>
+                  </div>
+                </div>
               </div>
 
-              {/* Reply Form */}
-              <form onSubmit={handleSendReply} className="pt-4 border-t border-slate-800 flex gap-2">
-                <input
-                  type="text"
-                  value={replyText}
-                  onChange={(e) => setReplyText(e.target.value)}
-                  placeholder="Type official staff response..."
-                  className="flex-1 bg-slate-950 border border-slate-700 rounded-xl px-4 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500"
-                />
-                <button
-                  type="submit"
-                  className="px-5 py-2.5 bg-cyan-600 hover:bg-cyan-500 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow"
-                >
-                  <Send className="w-3.5 h-3.5" />
-                  <span>Send</span>
-                </button>
+              <ol className="p-5 space-y-3 max-h-[28rem] overflow-y-auto overscroll-contain">
+                {selected.messages.map((m) => (
+                  <li key={m.id} className={`rounded-2xl p-3.5 text-sm ${m.sender === 'staff' ? 'bg-cyan-950/40 border border-cyan-800/40 sm:ml-10' : 'bg-slate-950 border border-slate-800 sm:mr-10'}`}>
+                    <div className="flex justify-between gap-3 text-xs mb-1">
+                      <span className="font-bold text-slate-200">{m.sender === 'staff' ? `${m.senderName || 'Staff'} (staff)` : selected.customerName}</span>
+                      <time className="text-slate-500">{fmtDateTime(m.timestamp)}</time>
+                    </div>
+                    <p className="text-slate-300 whitespace-pre-line break-words">{m.text}</p>
+                  </li>
+                ))}
+              </ol>
+
+              <form onSubmit={sendReply} className="p-5 border-t border-slate-800 space-y-3">
+                <textarea rows={4} value={reply} onChange={(e) => setReply(e.target.value)} maxLength={5000} placeholder="Write a reply to the customer…" className="field-input" aria-label="Reply" />
+                <div className="flex flex-col sm:flex-row gap-2 sm:items-center sm:justify-end">
+                  <select value={replyStatus} onChange={(e) => setReplyStatus(e.target.value)} className="field-input sm:!w-56" aria-label="Status after reply">
+                    <option value="">Status: keep / In Progress</option>
+                    <option value="Resolved">Reply & mark Resolved</option>
+                    <option value="Closed">Reply & Close</option>
+                  </select>
+                  <button type="submit" disabled={busy || reply.trim().length < 2} className="btn btn-primary">{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}Send reply</button>
+                </div>
               </form>
-            </>
-          ) : (
-            <div className="text-center py-20 text-slate-500 text-xs">Select a support ticket to review messages</div>
+            </section>
           )}
         </div>
-      </div>
+      )}
     </div>
   );
 };

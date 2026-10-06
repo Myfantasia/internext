@@ -26,9 +26,64 @@ export const ComparePage: React.FC = () => {
   const [highlightDifferences, setHighlightDifferences] = useState<boolean>(false);
   const [searchPicker, setSearchPicker] = useState<string>('');
 
-  const availableToAdd = products.filter(
-    (p) => !compareList.some((c) => c.id === p.id)
-  );
+  const [onlyDifferences, setOnlyDifferences] = useState(false);
+
+  // Suggest same-category products first — comparisons across categories are rarely meaningful.
+  const primaryCategory = compareList[0]?.category;
+  const availableToAdd = products
+    .filter((p) => !compareList.some((c) => c.id === p.id))
+    .sort((a, b) => Number(b.category === primaryCategory) - Number(a.category === primaryCategory));
+  const mixedCategories = new Set(compareList.map((p) => p.category)).size > 1;
+
+  // Rows: general facts, then every specification section/attribute present on
+  // ANY compared product (category-aware by construction), skipping attributes
+  // that none of them have.
+  type Row =
+    | { type: 'section'; key: string; label: string }
+    | { type: 'row'; key: string; label: string; values: (string | null)[]; render?: (p: Product) => React.ReactNode; className?: string };
+  const rows: Row[] = [];
+  const effPrice = (p: Product) => p.flashDeal?.dealPrice ?? p.price;
+  rows.push({ type: 'section', key: 's-overview', label: 'Overview' });
+  rows.push({ type: 'row', key: 'price', label: 'Price', values: compareList.map((p) => String(effPrice(p))), className: 'font-black text-emerald-400', render: (p) => (
+    <span>{formatPrice(effPrice(p))}{p.flashDeal && <span className="block text-[11px] font-normal text-amber-300">Flash deal · was {formatPrice(p.price)}</span>}</span>
+  ) });
+  rows.push({ type: 'row', key: 'brand', label: 'Brand', values: compareList.map((p) => p.brand || null) });
+  rows.push({ type: 'row', key: 'category', label: 'Category', values: compareList.map((p) => p.category || null) });
+  rows.push({ type: 'row', key: 'condition', label: 'Condition', values: compareList.map((p) => p.condition || null) });
+  rows.push({ type: 'row', key: 'warranty', label: 'Warranty', values: compareList.map((p) => p.warranty || null) });
+  rows.push({ type: 'row', key: 'stock', label: 'Availability', values: compareList.map((p) => (p.stock > 0 ? 'in' : 'out')), render: (p) => (
+    p.stock > 0 ? <span className="text-emerald-400 font-semibold">{p.stock <= 5 ? `Only ${p.stock} left` : 'In stock'}</span> : <span className="text-rose-400 font-semibold">Out of stock</span>
+  ) });
+  rows.push({ type: 'row', key: 'rating', label: 'Customer rating', values: compareList.map((p) => String(p.rating)), render: (p) => (
+    p.reviewsCount ? <span className="flex items-center gap-1 text-amber-400 font-bold"><Star className="w-3.5 h-3.5 fill-amber-400" />{Number(p.rating).toFixed(1)}<span className="text-slate-500 font-normal">({p.reviewsCount})</span></span> : <span className="text-slate-500">No reviews yet</span>
+  ) });
+  rows.push({ type: 'row', key: 'features', label: 'Key features', values: compareList.map((p) => p.shortSpecs || null), className: 'text-[12px] leading-relaxed', render: (p) => (
+    p.shortSpecs ? <ul className="space-y-1">{p.shortSpecs.split('|').map((f) => f.trim()).filter(Boolean).map((f) => <li key={f}>• {f}</li>)}</ul> : <span className="text-slate-500">—</span>
+  ) });
+
+  const sectionOrder: string[] = [];
+  const attrsBySection = new Map<string, string[]>();
+  for (const p of compareList) {
+    for (const [section, attrs] of Object.entries(p.specs || {})) {
+      if (!attrs || !Object.keys(attrs).length) continue;
+      if (!attrsBySection.has(section)) { attrsBySection.set(section, []); sectionOrder.push(section); }
+      const list = attrsBySection.get(section)!;
+      for (const key of Object.keys(attrs)) if (!list.includes(key)) list.push(key);
+    }
+  }
+  for (const section of sectionOrder) {
+    // "Brand/Condition/Warranty" already appear in Overview.
+    const keys = attrsBySection.get(section)!.filter((k) => !(section === 'General' && ['Brand', 'Condition', 'Warranty'].includes(k)));
+    if (!keys.length) continue;
+    rows.push({ type: 'section', key: `s-${section}`, label: section });
+    for (const key of keys) {
+      rows.push({ type: 'row', key: `${section}-${key}`, label: key, values: compareList.map((p) => p.specs?.[section]?.[key] || null) });
+    }
+  }
+  rows.push({ type: 'section', key: 's-description', label: 'Description' });
+  rows.push({ type: 'row', key: 'description', label: 'Summary', values: compareList.map((p) => p.description || null), className: 'text-[12px] leading-relaxed text-slate-300', render: (p) => (
+    p.description ? <span className="line-clamp-6">{p.description}</span> : <span className="text-slate-500">—</span>
+  ) });
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-950 text-slate-100 selection:bg-cyan-600 selection:text-white">
@@ -54,7 +109,7 @@ export const ComparePage: React.FC = () => {
             </p>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
             {/* Highlight Differences toggle */}
             <label className="flex items-center gap-2 px-3 py-2 bg-slate-900 border border-slate-800 rounded-xl text-xs cursor-pointer text-slate-300">
               <input
@@ -63,7 +118,11 @@ export const ComparePage: React.FC = () => {
                 onChange={(e) => setHighlightDifferences(e.target.checked)}
                 className="rounded bg-slate-800 text-cyan-600 focus:ring-cyan-500"
               />
-              <span>Highlight Differences</span>
+              <span>Highlight differences</span>
+            </label>
+            <label className="flex items-center gap-2 px-3 py-2 bg-slate-900 border border-slate-800 rounded-xl text-xs cursor-pointer text-slate-300">
+              <input type="checkbox" checked={onlyDifferences} onChange={(e) => setOnlyDifferences(e.target.checked)} className="accent-[var(--t-accent-600)]" />
+              <span>Only show differences</span>
             </label>
 
             {compareList.length > 0 && (
@@ -81,7 +140,12 @@ export const ComparePage: React.FC = () => {
       </div>
 
       {/* Main Table Container */}
-      <div className="max-w-[1520px] mx-auto px-3 sm:px-4 lg:px-5 py-8 flex-1 w-full overflow-x-auto">
+      <div className="max-w-[1520px] mx-auto px-3 sm:px-4 lg:px-5 py-8 flex-1 w-full">
+        {mixedCategories && (
+          <div className="callout callout-warning mb-4"><span>You're comparing products from different categories, so some specifications only apply to one of them (shown as —).</span></div>
+        )}
+        {compareList.length > 1 && <p className="lg:hidden text-xs text-slate-400 mb-2">Swipe sideways to see every product. The specification names stay pinned on the left.</p>}
+        <div className="table-scroll rounded-3xl">
         {compareList.length === 0 ? (
           <div className="text-center py-20 bg-slate-900/40 rounded-3xl border border-slate-800 p-8 space-y-4 max-w-md mx-auto">
             <div className="w-16 h-16 rounded-full bg-slate-800 mx-auto flex items-center justify-center text-slate-500">
@@ -100,15 +164,15 @@ export const ComparePage: React.FC = () => {
             </a>
           </div>
         ) : (
-          <div className="min-w-[700px] bg-slate-900 border border-slate-800 rounded-3xl overflow-hidden shadow-2xl">
-            <table className="w-full text-left border-collapse text-xs">
+          <div className="min-w-max bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl">
+            <table className="w-full text-left border-collapse text-sm" aria-label="Product comparison">
               <thead>
                 <tr className="border-b border-slate-800 bg-slate-950/80">
-                  <th className="p-4 w-48 text-slate-400 font-bold uppercase tracking-wider">
+                  <th className="sticky left-0 z-20 bg-slate-950 p-4 w-40 sm:w-48 text-slate-400 font-bold uppercase tracking-wider text-xs">
                     Specification
                   </th>
                   {compareList.map((product) => (
-                    <th key={product.id} className="p-4 w-64 align-top">
+                    <th key={product.id} scope="col" className="p-4 w-56 sm:w-64 min-w-[13rem] align-top">
                       <div className="relative space-y-3">
                         <button
                           type="button"
@@ -136,7 +200,7 @@ export const ComparePage: React.FC = () => {
                         </div>
 
                         <div className="text-base font-black text-emerald-400">
-                          {formatPrice(product.price)}
+                          {formatPrice(product.flashDeal?.dealPrice ?? product.price)}
                         </div>
 
                         <button
@@ -182,95 +246,37 @@ export const ComparePage: React.FC = () => {
                 </tr>
               </thead>
 
-              <tbody className="divide-y divide-slate-800/80">
-                {/* Brand & Category */}
-                <tr className="hover:bg-slate-800/30">
-                  <td className="p-4 font-bold text-slate-400 bg-slate-950/40">Brand / Category</td>
-                  {compareList.map((p) => (
-                    <td key={p.id} className="p-4 font-semibold text-white">
-                      {p.brand} ({p.category})
-                    </td>
-                  ))}
-                  {compareList.length < 4 && <td className="bg-slate-950/20" />}
-                </tr>
-
-                {/* SKU */}
-                <tr className="hover:bg-slate-800/30">
-                  <td className="p-4 font-bold text-slate-400 bg-slate-950/40">SKU Code</td>
-                  {compareList.map((p) => (
-                    <td key={p.id} className="p-4 font-mono text-slate-300">
-                      {p.sku}
-                    </td>
-                  ))}
-                  {compareList.length < 4 && <td className="bg-slate-950/20" />}
-                </tr>
-
-                {/* Rating */}
-                <tr className="hover:bg-slate-800/30">
-                  <td className="p-4 font-bold text-slate-400 bg-slate-950/40">Customer Rating</td>
-                  {compareList.map((p) => (
-                    <td key={p.id} className="p-4">
-                      <div className="flex items-center gap-1 text-amber-400 font-bold">
-                        <Star className="w-3.5 h-3.5 fill-amber-400" />
-                        <span>{p.rating.toFixed(1)}</span>
-                        <span className="text-slate-500 font-normal">({p.reviewsCount})</span>
-                      </div>
-                    </td>
-                  ))}
-                  {compareList.length < 4 && <td className="bg-slate-950/20" />}
-                </tr>
-
-                {/* Key Summary */}
-                <tr className="hover:bg-slate-800/30">
-                  <td className="p-4 font-bold text-slate-400 bg-slate-950/40">Key Specifications</td>
-                  {compareList.map((p) => (
-                    <td key={p.id} className="p-4 text-slate-300 leading-relaxed font-mono text-[11px]">
-                      {p.shortSpecs || p.description}
-                    </td>
-                  ))}
-                  {compareList.length < 4 && <td className="bg-slate-950/20" />}
-                </tr>
-
-                {/* Condition */}
-                <tr className="hover:bg-slate-800/30">
-                  <td className="p-4 font-bold text-slate-400 bg-slate-950/40">Condition</td>
-                  {compareList.map((p) => (
-                    <td key={p.id} className="p-4 font-bold text-cyan-300">
-                      {p.condition}
-                    </td>
-                  ))}
-                  {compareList.length < 4 && <td className="bg-slate-950/20" />}
-                </tr>
-
-                {/* Warranty */}
-                <tr className="hover:bg-slate-800/30">
-                  <td className="p-4 font-bold text-slate-400 bg-slate-950/40">Warranty</td>
-                  {compareList.map((p) => (
-                    <td key={p.id} className="p-4 font-medium text-emerald-400">
-                      {p.warranty}
-                    </td>
-                  ))}
-                  {compareList.length < 4 && <td className="bg-slate-950/20" />}
-                </tr>
-
-                {/* Stock Level */}
-                <tr className="hover:bg-slate-800/30">
-                  <td className="p-4 font-bold text-slate-400 bg-slate-950/40">Inventory Stock</td>
-                  {compareList.map((p) => (
-                    <td key={p.id} className="p-4">
-                      {p.stock > 0 ? (
-                        <span className="text-emerald-400 font-bold">{p.stock} Units In Stock</span>
-                      ) : (
-                        <span className="text-rose-400 font-bold">Out of Stock</span>
-                      )}
-                    </td>
-                  ))}
-                  {compareList.length < 4 && <td className="bg-slate-950/20" />}
-                </tr>
+              <tbody>
+                {rows.map((row) => {
+                  if (row.type === 'section') {
+                    return (
+                      <tr key={row.key}>
+                        <th scope="colgroup" colSpan={compareList.length + 1 + (compareList.length < 4 ? 1 : 0)} className="sticky left-0 px-4 pt-6 pb-2 text-left text-[11px] font-extrabold uppercase tracking-wider text-cyan-400 bg-slate-900">
+                          {row.label}
+                        </th>
+                      </tr>
+                    );
+                  }
+                  const differs = new Set(row.values.map((v) => (v ?? '').toLowerCase())).size > 1;
+                  if (onlyDifferences && !differs) return null;
+                  return (
+                    <tr key={row.key} className={`border-t border-slate-800/80 ${highlightDifferences && differs ? 'bg-amber-950/20' : ''}`}>
+                      <th scope="row" className="sticky left-0 z-10 p-4 w-40 sm:w-48 text-left font-semibold text-slate-400 bg-slate-950 align-top">{row.label}</th>
+                      {row.values.map((v, i) => (
+                        <td key={compareList[i].id} className={`p-4 align-top text-slate-200 ${row.className || ''}`}>
+                          <span className="sr-only">{compareList[i].name}: </span>
+                          {row.render ? row.render(compareList[i]) : v ?? <span className="text-slate-500">—</span>}
+                        </td>
+                      ))}
+                      {compareList.length < 4 && <td className="bg-slate-950/20" />}
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
         )}
+        </div>
       </div>
 
       <Footer />

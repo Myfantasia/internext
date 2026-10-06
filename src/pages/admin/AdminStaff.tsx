@@ -53,7 +53,7 @@ export const AdminStaff: React.FC = () => {
       if (data.success) {
         setNewCode(data.code);
         setCodeEmail('');
-        showToast('Single-use signup code generated.', 'success');
+        showToast(data.emailed ? `Code generated and emailed to ${data.email}.` : 'Code generated, but the email could not be sent — share it with the staff member securely.', data.emailed ? 'success' : 'warning');
         load();
       } else showToast(data.message || 'Could not generate code', 'error');
     } catch { showToast('Could not generate code', 'error'); }

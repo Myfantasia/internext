@@ -22,7 +22,7 @@ export const RequireRole: React.FC<RequireRoleProps> = ({ allow, children, admin
       // Admin routes → staff portal login; customer routes → /auth
       const isAdminRoute = allow.includes('ADMIN') || allow.includes('SALES_MANAGER');
       const loginPath = isAdminRoute ? '/admin/login' : '/auth';
-      navigate(`${loginPath}?redirect=${encodeURIComponent(window.location.pathname)}`);
+      navigate(`${loginPath}?redirect=${encodeURIComponent(window.location.pathname + window.location.search)}`);
     }
   }, [isLoading, isAuthenticated, user, allow]);
 

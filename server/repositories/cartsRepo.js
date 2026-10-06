@@ -1,6 +1,8 @@
 import { eq, and, isNull } from 'drizzle-orm';
 import { db } from '../db/client.js';
+import { isUuid } from '../db/util.js';
 import { carts, cartItems, products, productVariants } from '../db/schema.js';
+import { getLiveFlashDeals, priceLine } from '../services/pricing.js';
 
 export class CartError extends Error {
   constructor(message, status = 400, extra = {}) {
@@ -15,7 +17,7 @@ async function checkStock(productId, variantId, requestedQuantity) {
   if (!product || !product.isActive) {
     throw new CartError('Product not found', 404);
   }
-  let available = product.stock;
+  let available = product.stock - product.reservedStock;
   if (variantId) {
     const [variant] = await db.select().from(productVariants).where(eq(productVariants.id, variantId)).limit(1);
     if (!variant) throw new CartError('Product variant not found', 404);
@@ -44,18 +46,24 @@ async function toApiCart(cartId) {
     .leftJoin(productVariants, eq(cartItems.variantId, productVariants.id))
     .where(eq(cartItems.cartId, cartId));
 
-  return rows.map(({ item, product, variant }) => ({
-    productId: product.id,
-    variantId: variant?.id || null,
-    name: product.name,
-    variantName: variant?.name || null,
-    sku: variant?.sku || product.sku,
-    price: Number(variant?.price ?? product.price),
-    compareAtPrice: product.compareAtPrice ? Number(product.compareAtPrice) : null,
-    quantity: item.quantity,
-    thumbnail: product.thumbnailUrl,
-    stock: variant?.stock ?? product.stock
-  }));
+  const deals = await getLiveFlashDeals(rows.map((r) => r.product.id));
+  return rows.map(({ item, product, variant }) => {
+    const deal = deals.get(product.id);
+    const priced = priceLine(Number(variant?.price ?? product.price), deal);
+    return {
+      productId: product.id,
+      variantId: variant?.id || null,
+      name: product.name,
+      variantName: variant?.name || null,
+      sku: variant?.sku || product.sku,
+      price: priced.unitPrice,
+      compareAtPrice: deal ? priced.originalUnitPrice : (product.compareAtPrice ? Number(product.compareAtPrice) : null),
+      flashDeal: deal ? { id: deal.id, title: deal.title, endsAt: deal.endsAt } : null,
+      quantity: item.quantity,
+      thumbnail: product.thumbnailUrl,
+      stock: variant?.stock ?? Math.max(0, product.stock - product.reservedStock)
+    };
+  });
 }
 
 export async function getCart(userId) {
@@ -63,7 +71,15 @@ export async function getCart(userId) {
   return toApiCart(cart.id);
 }
 
+function parseQuantity(quantity, { allowZero = false } = {}) {
+  const q = Number(quantity);
+  if (!Number.isInteger(q) || q < (allowZero ? 0 : 1) || q > 10000) throw new CartError('Quantity must be a whole number between 1 and 10,000.');
+  return q;
+}
+
 export async function addCartItem(userId, { productId, variantId, quantity = 1 }) {
+  if (!isUuid(productId) || (variantId && !isUuid(variantId))) throw new CartError('Product not found', 404);
+  quantity = parseQuantity(quantity);
   const cart = await getOrCreateCart(userId);
   const condition = variantId
     ? and(eq(cartItems.cartId, cart.id), eq(cartItems.productId, productId), eq(cartItems.variantId, variantId))
@@ -82,6 +98,8 @@ export async function addCartItem(userId, { productId, variantId, quantity = 1 }
 }
 
 export async function updateCartItemQuantity(userId, { productId, variantId, quantity }) {
+  if (!isUuid(productId) || (variantId && !isUuid(variantId))) throw new CartError('Product not found', 404);
+  quantity = parseQuantity(quantity, { allowZero: true });
   const cart = await getOrCreateCart(userId);
   const condition = variantId
     ? and(eq(cartItems.cartId, cart.id), eq(cartItems.productId, productId), eq(cartItems.variantId, variantId))

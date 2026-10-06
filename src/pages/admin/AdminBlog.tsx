@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { Plus, Newspaper, Save, X } from 'lucide-react';
+import { Plus, Newspaper, Save } from 'lucide-react';
+import { Modal, Field } from './adminUi';
 import { useToast } from '../../context/ToastContext';
 import { ImageUploadField } from '../../components/admin/ImageUploadField';
 
@@ -142,77 +143,39 @@ export const AdminBlog: React.FC = () => {
       </div>
 
       {isModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md overflow-y-auto">
-          <form onSubmit={handleCreate} className="bg-slate-900 border border-slate-700 rounded-3xl max-w-2xl w-full p-6 space-y-4 my-8 text-xs">
-            <div className="flex items-center justify-between pb-2 border-b border-slate-800">
-              <h3 className="text-lg font-bold text-white">Publish Article</h3>
-              <button type="button" onClick={() => setIsModalOpen(false)} className="text-slate-400 hover:text-white">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            <label className="block">
-              <span className="block text-slate-300 font-bold mb-1">Title</span>
-              <input
-                value={form.title}
-                onChange={(e) => setForm({ ...form, title: e.target.value })}
-                className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-white"
-                required
-              />
-            </label>
-            <div className="grid grid-cols-2 gap-3">
-              <label className="block">
-                <span className="block text-slate-300 font-bold mb-1">Category</span>
-                <select
-                  value={form.category}
-                  onChange={(e) => setForm({ ...form, category: e.target.value })}
-                  className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-white"
-                >
+        <Modal
+          title="Publish article"
+          onClose={() => setIsModalOpen(false)}
+          footer={<>
+            <button type="button" onClick={() => setIsModalOpen(false)} className="btn btn-secondary">Cancel</button>
+            <button type="submit" form="blog-form" disabled={saving} className="btn btn-primary"><Save className="w-4 h-4" />{saving ? 'Publishing…' : 'Publish'}</button>
+          </>}
+        >
+          <form id="blog-form" onSubmit={handleCreate} className="space-y-4">
+            <Field label="Title" htmlFor="blog-title" required>
+              <input id="blog-title" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} className="field-input" required />
+            </Field>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <Field label="Category" htmlFor="blog-category">
+                <select id="blog-category" value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} className="field-input">
                   <option>Buying Guides</option>
                   <option>Laptop Reviews</option>
                   <option>Technology News</option>
                 </select>
-              </label>
-              <label className="block">
-                <span className="block text-slate-300 font-bold mb-1">Author</span>
-                <input
-                  value={form.author}
-                  onChange={(e) => setForm({ ...form, author: e.target.value })}
-                  className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-white"
-                />
-              </label>
+              </Field>
+              <Field label="Author" htmlFor="blog-author">
+                <input id="blog-author" value={form.author} onChange={(e) => setForm({ ...form, author: e.target.value })} className="field-input" />
+              </Field>
             </div>
             <ImageUploadField value={form.image} onChange={(url) => setForm({ ...form, image: url })} label="Cover image" />
-            <label className="block">
-              <span className="block text-slate-300 font-bold mb-1">Excerpt</span>
-              <input
-                value={form.excerpt}
-                onChange={(e) => setForm({ ...form, excerpt: e.target.value })}
-                className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-white"
-              />
-            </label>
-            <label className="block">
-              <span className="block text-slate-300 font-bold mb-1">Article body</span>
-              <textarea
-                value={form.content}
-                onChange={(e) => setForm({ ...form, content: e.target.value })}
-                className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-white min-h-32"
-                required
-              />
-            </label>
-            <div className="flex justify-end gap-2 pt-2">
-              <button type="button" onClick={() => setIsModalOpen(false)} className="px-4 py-2 bg-slate-800 rounded-xl font-bold">
-                Cancel
-              </button>
-              <button
-                type="submit"
-                disabled={saving}
-                className="px-5 py-2 bg-cyan-600 hover:bg-cyan-500 rounded-xl font-bold text-white flex items-center gap-2"
-              >
-                <Save className="w-4 h-4" /> Publish
-              </button>
-            </div>
+            <Field label="Excerpt" htmlFor="blog-excerpt" hint="One or two sentences shown on the blog list.">
+              <input id="blog-excerpt" value={form.excerpt} onChange={(e) => setForm({ ...form, excerpt: e.target.value })} className="field-input" />
+            </Field>
+            <Field label="Article body" htmlFor="blog-content" required>
+              <textarea id="blog-content" value={form.content} onChange={(e) => setForm({ ...form, content: e.target.value })} className="field-input min-h-48" rows={10} required />
+            </Field>
           </form>
-        </div>
+        </Modal>
       )}
     </div>
   );

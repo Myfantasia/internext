@@ -32,7 +32,7 @@ function deliveryEstimate(order: Order) {
 export const TrackOrderPage: React.FC = () => {
   const { formatPrice } = useStore();
   const urlParams = new URLSearchParams(window.location.search);
-  const initialOrderNo = urlParams.get('orderNumber') || '';
+  const initialOrderNo = urlParams.get('orderNumber') || urlParams.get('order') || '';
 
   const [searchQuery, setSearchQuery] = useState<string>(initialOrderNo);
   const [order, setOrder] = useState<Order | null>(null);
@@ -157,14 +157,14 @@ export const TrackOrderPage: React.FC = () => {
               </p>
             </div>
 
-            <button
+            {!order.limited && <button
               type="button"
               onClick={() => setIsInvoiceOpen(true)}
               className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 border border-slate-700 transition-colors"
             >
               <Printer className="w-4 h-4" />
               <span>View Invoice</span>
-            </button>
+            </button>}
           </div>
 
           {/* Step Fulfillment Timeline */}
@@ -223,8 +223,8 @@ export const TrackOrderPage: React.FC = () => {
             <div className="p-6 rounded-3xl bg-slate-900 border border-slate-800 space-y-3">
               <h4 className="font-bold text-white text-sm">Delivery Destination:</h4>
               <div className="text-slate-300 space-y-1">
-                <div>{order.deliveryAddress.building}</div>
-                <div>{order.deliveryAddress.street}</div>
+                {order.deliveryAddress?.building && <div>{order.deliveryAddress.building}</div>}
+                {order.deliveryAddress?.street && <div>{order.deliveryAddress.street}</div>}
                 <div className="font-bold text-white">{order.deliveryAddress.town}, {order.deliveryAddress.county}</div>
               </div>
               <div className="text-cyan-400 font-semibold pt-2 border-t border-slate-800">
@@ -232,6 +232,13 @@ export const TrackOrderPage: React.FC = () => {
               </div>
             </div>
 
+            {order.limited ? (
+            <div className="p-6 rounded-3xl bg-slate-900 border border-slate-800 space-y-3">
+              <h4 className="font-bold text-white text-sm">Order contents</h4>
+              <p className="text-slate-300">{order.itemCount} item(s). Sign in as the account that placed this order to see items, totals and invoices.</p>
+              <a href={`/auth?redirect=${encodeURIComponent(`/order-confirmation?orderNumber=${order.orderNumber}`)}`} className="btn btn-secondary btn-sm">Sign in for full details</a>
+            </div>
+            ) : (
             <div className="p-6 rounded-3xl bg-slate-900 border border-slate-800 space-y-3">
               <h4 className="font-bold text-white text-sm">Order Items ({order.items.length}):</h4>
               <div className="divide-y divide-slate-800">
@@ -247,12 +254,13 @@ export const TrackOrderPage: React.FC = () => {
                 <span className="text-cyan-400">{formatPrice(order.total)}</span>
               </div>
             </div>
+            )}
           </div>
         </main>
       )}
 
       {/* Invoice Modal */}
-      {isInvoiceOpen && order && (
+      {isInvoiceOpen && order && !order.limited && (
         <InvoiceModal order={order} onClose={() => setIsInvoiceOpen(false)} />
       )}
 

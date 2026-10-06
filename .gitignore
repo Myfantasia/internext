@@ -7,3 +7,5 @@ dist-ssr
 .DS_Store
 uploads/*
 !uploads/.gitkeep
+.env.*
+!.env.example

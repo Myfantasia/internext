@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { useCart } from '../../context/CartContext';
 import { useStore } from '../../context/StoreContext';
+import { Portal, useBodyScrollLock, useEscapeKey } from '../common/Overlay';
 
 export const CartDrawer: React.FC = () => {
   const {
@@ -20,7 +21,8 @@ export const CartDrawer: React.FC = () => {
     cartCount,
     subtotal,
     discountAmount,
-    deliveryFee,
+    taxAmount,
+    taxRate,
     total,
     appliedCoupon,
     updateQuantity,
@@ -35,6 +37,8 @@ export const CartDrawer: React.FC = () => {
   const { formatPrice, settings } = useStore();
   const [couponInput, setCouponInput] = useState('');
   const [isApplyingCoupon, setIsApplyingCoupon] = useState(false);
+  useBodyScrollLock(isCartDrawerOpen);
+  useEscapeKey(() => setIsCartDrawerOpen(false), isCartDrawerOpen);
 
   if (!isCartDrawerOpen) return null;
 
@@ -51,6 +55,7 @@ export const CartDrawer: React.FC = () => {
   const freeDeliveryProgress = Math.min(100, Math.round((subtotal / (settings.freeShippingThreshold || 50000)) * 100));
 
   return (
+    <Portal>
     <div className="fixed inset-0 z-50 overflow-hidden animate-in fade-in duration-200">
       {/* Backdrop */}
       <div
@@ -242,15 +247,15 @@ export const CartDrawer: React.FC = () => {
                   </div>
                 )}
                 <div className="flex justify-between">
-                  <span>Estimated Delivery:</span>
-                  <span className="font-bold text-white">{deliveryFee === 0 ? 'FREE' : formatPrice(deliveryFee)}</span>
+                  <span>Delivery:</span>
+                  <span className="font-semibold text-slate-400">At checkout</span>
                 </div>
                 <div className="flex justify-between text-[11px] text-slate-400">
-                  <span>VAT (16% Included):</span>
-                  <span>{formatPrice(Math.round((subtotal * 16) / 116))}</span>
+                  <span>VAT ({taxRate}% included):</span>
+                  <span>{formatPrice(taxAmount)}</span>
                 </div>
                 <div className="flex justify-between text-base font-extrabold text-white pt-2 border-t border-slate-800">
-                  <span>Total Amount:</span>
+                  <span>Total before delivery:</span>
                   <span className="text-cyan-400">{formatPrice(total)}</span>
                 </div>
               </div>
@@ -276,5 +281,6 @@ export const CartDrawer: React.FC = () => {
         </div>
       </div>
     </div>
+    </Portal>
   );
 };

@@ -8,7 +8,7 @@ import { requireRole } from '../middleware/authorize.js';
 import { findUserByEmail, createUser, toSafeUser } from '../repositories/usersRepo.js';
 import { createInvite, findInviteByTokenHash, markInviteAccepted, revokeInvite, listInvites } from '../repositories/invitesRepo.js';
 import { logAudit } from '../repositories/auditLogsRepo.js';
-import { sendSalesManagerInviteEmail } from '../services/email/index.js';
+import { sendSalesManagerInviteEmail, sendStaffSignupCodeEmail } from '../services/email/index.js';
 import { createStaffSignupCode, listStaffSignupCodes, revokeStaffSignupCode } from '../repositories/staffSignupCodesRepo.js';
 
 const router = express.Router();
@@ -25,7 +25,15 @@ router.post('/codes', requireRole('ADMIN'), inviteLimiter, async (req, res) => {
   const code = `IBS-${crypto.randomBytes(8).toString('hex').toUpperCase().match(/.{1,4}/g).join('-')}`;
   const record = await createStaffSignupCode({ email, role, codeHash: hashOpaqueToken(code), createdBy: req.user.id });
   await logAudit({ actorId: req.user.id, actorName: req.user.name, action: 'STAFF_SIGNUP_CODE_CREATED', entity: 'Staff Signup Code', entityId: record.id, newValue: `${role} for ${email}`, ip: req.ip });
-  res.status(201).json({ success: true, code, email, role, expiresAt: record.expiresAt });
+  // The code is also shown once to the admin, so delivery failure is reported, not fatal.
+  let emailed = true;
+  try {
+    await sendStaffSignupCodeEmail(email, { code, role, expiresAt: record.expiresAt });
+  } catch (e) {
+    emailed = false;
+    console.error('Failed to email staff signup code:', e.message);
+  }
+  res.status(201).json({ success: true, code, email, role, expiresAt: record.expiresAt, emailed });
 });
 
 router.get('/codes', requireRole('ADMIN'), async (_req, res) => {

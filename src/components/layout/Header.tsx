@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useBodyScrollLock } from '../common/Overlay';
 import {
   Zap,
   Phone,
@@ -51,6 +52,7 @@ export const Header: React.FC<HeaderProps> = ({ currentPath = '/' }) => {
   const [isMegaMenuOpen, setIsMegaMenuOpen] = useState<boolean>(false);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState<boolean>(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState<boolean>(false);
+  useBodyScrollLock(isMobileMenuOpen);
   const [isScrolled, setIsScrolled] = useState<boolean>(false);
 
   const megaMenuRef = useRef<HTMLDivElement>(null);
@@ -494,7 +496,7 @@ export const Header: React.FC<HeaderProps> = ({ currentPath = '/' }) => {
               <span>Flash Deals</span>
             </a>
             <a
-              href="/blog"
+              href="/news"
               className="flex items-center gap-1.5 text-slate-300 hover:text-cyan-300 font-semibold px-2 py-1 transition-colors"
             >
               <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
@@ -506,7 +508,7 @@ export const Header: React.FC<HeaderProps> = ({ currentPath = '/' }) => {
 
       {/* 4. MOBILE NAVIGATION DRAWER */}
       {isMobileMenuOpen && (
-        <div className="lg:hidden fixed inset-0 top-[110px] bg-slate-950/95 backdrop-blur-md z-50 p-4 overflow-y-auto space-y-4 animate-in slide-in-from-left duration-200">
+        <div className="lg:hidden fixed inset-0 top-[110px] bg-slate-950/95 backdrop-blur-md z-50 p-4 overflow-y-auto overscroll-contain space-y-4 animate-in slide-in-from-left duration-200">
           <div className="space-y-1">
             <div className="text-xs font-bold text-slate-400 uppercase tracking-wider px-3 py-1">
               Shop Categories
@@ -554,6 +556,13 @@ export const Header: React.FC<HeaderProps> = ({ currentPath = '/' }) => {
               className="block px-3 py-2 text-sm text-slate-300 hover:text-white"
             >
               Store Locations & Hours
+            </a>
+            <a
+              href="/news"
+              onClick={() => setIsMobileMenuOpen(false)}
+              className="block px-3 py-2 text-sm text-slate-300 hover:text-white"
+            >
+              Tech News & Guides
             </a>
             <a
               href="/blog"

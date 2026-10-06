@@ -15,6 +15,8 @@ interface StoreContextType {
   searchQuery: string;
   setSearchQuery: (q: string) => void;
   refreshProducts: () => Promise<void>;
+  /** Re-fetches products, categories and brands (after admin catalog edits). */
+  refreshCatalog: () => Promise<void>;
   refreshSettings: () => Promise<void>;
   updateSettings: (newSettings: Partial<StoreSettings>) => Promise<void>;
 }
@@ -123,6 +125,20 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     }
   };
 
+  const refreshCatalog = async () => {
+    try {
+      const [prodRes, catRes, brandRes] = await Promise.all([
+        fetch('/api/products?limit=100'), fetch('/api/categories'), fetch('/api/brands')
+      ]);
+      const [prodData, catData, brandData] = await Promise.all([prodRes.json(), catRes.json(), brandRes.json()]);
+      if (prodData?.products) setProducts(prodData.products);
+      if (catData?.categories) setCategories(catData.categories);
+      if (brandData?.brands) setBrands(brandData.brands);
+    } catch (e) {
+      console.error('Failed to refresh catalog:', e);
+    }
+  };
+
   const refreshSettings = async () => {
     try {
       const res = await fetch('/api/admin/settings/public');
@@ -175,6 +191,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         searchQuery,
         setSearchQuery,
         refreshProducts,
+        refreshCatalog,
         refreshSettings,
         updateSettings
       }}

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Lock, User as UserIcon, ArrowRight, Briefcase } from 'lucide-react';
 import { Header } from '../components/layout/Header';
 import { Footer } from '../components/layout/Footer';
+import { PasswordInput } from '../components/forms/PasswordInput';
 
 export const AcceptInvitePage: React.FC = () => {
   const params = new URLSearchParams(window.location.search);
@@ -9,12 +10,14 @@ export const AcceptInvitePage: React.FC = () => {
 
   const [name, setName] = useState('');
   const [password, setPassword] = useState('');
+  const [confirm, setConfirm] = useState('');
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (password !== confirm) { setMessage('The two passwords do not match.'); return; }
     setLoading(true);
     setMessage(null);
     try {
@@ -88,21 +91,8 @@ export const AcceptInvitePage: React.FC = () => {
                   />
                 </div>
               </div>
-              <div>
-                <label className="block text-slate-300 font-bold mb-1">Password:</label>
-                <div className="relative">
-                  <Lock className="w-4 h-4 text-slate-500 absolute left-3.5 top-3" />
-                  <input
-                    type="password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-700 rounded-xl pl-10 pr-3 py-2.5 text-white focus:outline-none focus:border-cyan-500"
-                    required
-                    minLength={10}
-                    autoComplete="new-password"
-                  />
-                </div>
-              </div>
+              <PasswordInput label="New password" toggleLabel="new password" value={password} onChange={(e) => setPassword(e.target.value)} hint="10+ characters with upper & lower case and a number" required minLength={10} autoComplete="new-password" />
+              <PasswordInput label="Confirm password" toggleLabel="password confirmation" value={confirm} onChange={(e) => setConfirm(e.target.value)} error={confirm && confirm !== password ? 'Passwords do not match' : undefined} required autoComplete="new-password" />
               <button
                 type="submit"
                 disabled={loading}

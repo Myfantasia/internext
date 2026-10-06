@@ -9,12 +9,12 @@ function receiptNumberFor(seq) {
 // Receipts are only ever created here — i.e. only when a payment is actually
 // confirmed (see ordersRepo.confirmOrderPayment). Creating an order never
 // implies payment was received.
-export async function createReceiptForPayment(tx, order, { amount, paymentMethod, providerReference, rawPayload }) {
+export async function createReceiptForPayment(tx, order, { amount, paymentMethod, provider, providerReference, rawPayload }) {
   const [payment] = await tx
     .insert(payments)
     .values({
       orderId: order.id,
-      provider: paymentMethod || 'mpesa',
+      provider: provider || paymentMethod || 'manual',
       amount: String(amount),
       status: 'COMPLETED',
       providerReference,
@@ -22,17 +22,19 @@ export async function createReceiptForPayment(tx, order, { amount, paymentMethod
     })
     .returning();
 
-  const [{ count: existingCount }] = await tx.select({ count: sql`count(*)::int` }).from(receipts);
+  const [{ seq }] = await tx.execute(sql`select nextval('receipt_number_seq')::bigint as seq`);
   const [receipt] = await tx
     .insert(receipts)
     .values({
-      receiptNumber: receiptNumberFor(existingCount + 1),
+      receiptNumber: receiptNumberFor(seq),
       orderId: order.id,
       paymentId: payment.id,
       amount: String(amount),
       paymentMethod: paymentMethod || 'M-Pesa'
     })
     .returning();
+  // Re-confirmation of an already-receipted order is prevented upstream
+  // (confirmOrderPayment locks the order row and exits if already Paid).
 
   return { receipt, payment };
 }

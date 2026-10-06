@@ -8,16 +8,21 @@ import {
   verifyEmailSchema,
   updateProfileSchema,
   staffRegisterSchema,
+  changePasswordSchema,
+  changeEmailSchema,
   formatZodError
 } from '../schemas/authSchemas.js';
 import { hashPassword, verifyPassword, validatePasswordStrength } from '../auth/passwords.js';
-import { signSessionToken, verifySessionToken, generateOpaqueToken, hashOpaqueToken, sessionCookieMaxAgeMs } from '../auth/tokens.js';
+import { signSessionToken, verifySessionToken, generateOpaqueToken, hashOpaqueToken, sessionCookieMaxAgeMs, sessionTtlSeconds } from '../auth/tokens.js';
+import { db } from '../db/client.js';
 import {
   findUserByEmail,
+  findUserByPhone,
+  duplicateUserField,
+  updateUserEmail,
   findUserById,
   createUser,
   createFirstAdminIfAbsent,
-  findUserByReferralCode,
   countAdmins,
   updateUserProfile,
   updateUserPassword,
@@ -31,15 +36,24 @@ import { createToken, consumeToken } from '../repositories/tokensRepo.js';
 import { recordLoginAttempt } from '../repositories/loginAttemptsRepo.js';
 import { logAudit } from '../repositories/auditLogsRepo.js';
 import { requireAuth } from '../middleware/authorize.js';
-import { getCookieName } from '../middleware/session.js';
+import { getCookieName, sessionCookieOptions } from '../middleware/session.js';
 import { sendVerificationEmail, sendPasswordResetEmail } from '../services/email/index.js';
 import { PERMISSIONS } from '../auth/permissions.js';
 import { registerWithStaffCode } from '../repositories/staffSignupCodesRepo.js';
-import { getReferralSummary, issueReferralRewards } from '../repositories/referralRepo.js';
+import {
+  getReferralSummary, generateReferralCode, resolveReferralCode, attributeReferral, qualifyReferral, ReferralError
+} from '../repositories/referralRepo.js';
+import { normalizeKenyanPhone } from '../services/location.js';
 
 const router = express.Router();
 const COOKIE_NAME = getCookieName();
 const APP_URL = process.env.APP_URL || 'http://localhost:5174';
+
+const DUPLICATE_MESSAGES = {
+  email: { success: false, code: 'EMAIL_TAKEN', field: 'email', message: 'An account with this email already exists. Sign in, or reset your password if you forgot it.' },
+  phone: { success: false, code: 'PHONE_TAKEN', field: 'phone', message: 'This phone number is already registered to another account. Use a different number.' },
+  unknown: { success: false, code: 'ACCOUNT_EXISTS', message: 'An account with these details already exists.' }
+};
 
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -47,6 +61,13 @@ const authLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: { success: false, message: 'Too many attempts. Please try again later.' }
+});
+const referralCodeLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  limit: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, message: 'Too many referral code requests. Try again later.' }
 });
 const staffSignupLimiter = rateLimit({
   windowMs: 60 * 60 * 1000,
@@ -57,19 +78,14 @@ const staffSignupLimiter = rateLimit({
 });
 
 function setSessionCookie(res, token) {
-  res.cookie(COOKIE_NAME, token, {
-    httpOnly: true,
-    secure: process.env.COOKIE_SECURE === 'true',
-    sameSite: 'lax',
-    maxAge: sessionCookieMaxAgeMs(),
-    path: '/'
-  });
+  res.cookie(COOKIE_NAME, token, { ...sessionCookieOptions(), maxAge: sessionCookieMaxAgeMs() });
 }
 
 function clearSessionCookie(res) {
-  res.clearCookie(COOKIE_NAME, { path: '/' });
+  res.clearCookie(COOKIE_NAME, sessionCookieOptions());
 }
 
+// Only called from /login: registration never signs the user in.
 async function establishSession(req, res, user) {
   const session = await createSession({
     userId: user.id,
@@ -78,46 +94,65 @@ async function establishSession(req, res, user) {
   });
   const token = await signSessionToken({ userId: user.id, role: user.role, sessionId: session.id });
   setSessionCookie(res, token);
+  return session;
+}
+
+async function sendVerification(user) {
+  const rawToken = generateOpaqueToken();
+  await createToken('verify', { userId: user.id, tokenHash: hashOpaqueToken(rawToken), ttlMs: 24 * 60 * 60 * 1000 });
+  sendVerificationEmail(user.email, `${APP_URL}/auth/verify-email?token=${rawToken}`, user.name).catch((e) =>
+    console.error('Failed to send verification email:', e)
+  );
 }
 
 // -----------------------------------------------------------------------
 // Registration — always CUSTOMER. Role is never accepted from the client.
+// Creates the account only: the customer must then sign in explicitly, so no
+// session cookie is issued here.
 // -----------------------------------------------------------------------
 router.post('/register', authLimiter, async (req, res) => {
   const parsed = registerSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ success: false, message: formatZodError(parsed.error) });
   }
-  const { name, email, phone, password, referralCode } = parsed.data;
+  const { name, email, phone, password, referralCode, location } = parsed.data;
 
   const strength = validatePasswordStrength(password);
   if (!strength.valid) {
     return res.status(400).json({ success: false, message: strength.errors.join('. ') });
   }
 
-  const existing = await findUserByEmail(email);
-  if (existing) {
-    // Generic message — do not reveal which part of the input was wrong.
-    return res.status(400).json({ success: false, message: 'Unable to register with the provided details' });
-  }
+  // Every email and every phone number belongs to exactly one account.
+  const normalizedPhone = normalizeKenyanPhone(phone);
+  if (await findUserByEmail(email)) return res.status(409).json(DUPLICATE_MESSAGES.email);
+  if (await findUserByPhone(normalizedPhone)) return res.status(409).json(DUPLICATE_MESSAGES.phone);
 
-  let referredBy = null;
+  let referral = null;
   if (referralCode) {
-    const referrer = await findUserByReferralCode(referralCode);
-    if (!referrer) return res.status(400).json({ success: false, message: 'That referral code is invalid.' });
-    referredBy = referrer.id;
+    referral = await resolveReferralCode(referralCode);
+    if (referral.error) return res.status(400).json({ success: false, message: referral.error });
   }
 
   const passwordHash = await hashPassword(password);
-  const user = await createUser({ name, email, phone, passwordHash, role: 'CUSTOMER', referredBy });
+  let user;
+  try {
+    user = await db.transaction(async (tx) => {
+      const created = await createUser({
+        name, email, phone: normalizedPhone, passwordHash, role: 'CUSTOMER', location
+      }, tx);
+      if (referral) {
+        await attributeReferral(tx, { referrerId: referral.referrerId, referredUserId: created.id, codeId: referral.codeId, ip: req.ip, referredEmail: email });
+      }
+      return created;
+    });
+  } catch (err) {
+    // Two signups racing for the same email/phone: the unique index decides.
+    const field = duplicateUserField(err);
+    if (field) return res.status(409).json(DUPLICATE_MESSAGES[field] || DUPLICATE_MESSAGES.email);
+    throw err;
+  }
 
-  const rawToken = generateOpaqueToken();
-  await createToken('verify', { userId: user.id, tokenHash: hashOpaqueToken(rawToken), ttlMs: 24 * 60 * 60 * 1000 });
-  sendVerificationEmail(user.email, `${APP_URL}/auth/verify-email?token=${rawToken}`).catch((e) =>
-    console.error('Failed to send verification email:', e)
-  );
-
-  await establishSession(req, res, user);
+  await sendVerification(user);
   await logAudit({
     actorId: user.id,
     actorName: user.name,
@@ -128,7 +163,12 @@ router.post('/register', authLimiter, async (req, res) => {
     ip: req.ip
   });
 
-  res.status(201).json({ success: true, user: toSafeUser(user), permissions: PERMISSIONS[user.role] });
+  res.status(201).json({
+    success: true,
+    requiresLogin: true,
+    message: 'Account created. Please sign in to continue.',
+    user: { id: user.id, name: user.name, email: user.email, role: user.role }
+  });
 });
 
 // This status only controls the first-admin signup form. The write route uses
@@ -149,51 +189,69 @@ router.get('/staff-signup-status', async (_req, res) => {
 router.post('/staff-register', staffSignupLimiter, async (req, res) => {
   const parsed = staffRegisterSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ success: false, message: formatZodError(parsed.error) });
-  const { name, email, phone, password, invitationCode, referralCode } = parsed.data;
+  const { name, email, password, invitationCode } = parsed.data;
+  const phone = parsed.data.phone ? normalizeKenyanPhone(parsed.data.phone) : null;
   const strength = validatePasswordStrength(password);
   if (!strength.valid) return res.status(400).json({ success: false, message: strength.errors.join('. ') });
-  if (await findUserByEmail(email)) return res.status(400).json({ success: false, message: 'An account already exists for this email.' });
-
-  let referredBy = null;
-  if (referralCode) {
-    const referrer = await findUserByReferralCode(referralCode);
-    if (!referrer) return res.status(400).json({ success: false, message: 'That referral code is invalid.' });
-    referredBy = referrer.id;
-  }
+  if (await findUserByEmail(email)) return res.status(409).json(DUPLICATE_MESSAGES.email);
+  if (phone && await findUserByPhone(phone)) return res.status(409).json(DUPLICATE_MESSAGES.phone);
 
   const passwordHash = await hashPassword(password);
   let user;
-  if (invitationCode) {
-    const result = await registerWithStaffCode({
-      codeHash: hashOpaqueToken(invitationCode), name, email, phone, passwordHash, referredBy
-    });
-    if (result.error === 'existing_user') return res.status(400).json({ success: false, message: 'An account already exists for this email.' });
-    if (result.error) return res.status(400).json({ success: false, message: 'This staff code is invalid, expired, already used, or issued to another email.' });
-    user = result.user;
-  } else {
-    const bootstrapEmail = process.env.ADMIN_EMAIL?.trim().toLowerCase();
-    if (!bootstrapEmail) {
-      return res.status(503).json({ success: false, message: 'First-admin setup is not configured. Set ADMIN_EMAIL on the server, then try again.' });
+  try {
+    if (invitationCode) {
+      const result = await registerWithStaffCode({
+        codeHash: hashOpaqueToken(invitationCode), name, email, phone, passwordHash, referredBy: null
+      });
+      if (result.error === 'existing_user') return res.status(409).json(DUPLICATE_MESSAGES.email);
+      if (result.error) return res.status(400).json({ success: false, message: 'This staff code is invalid, expired, already used, or issued to another email.' });
+      user = result.user;
+    } else {
+      const bootstrapEmail = process.env.ADMIN_EMAIL?.trim().toLowerCase();
+      if (!bootstrapEmail) {
+        return res.status(503).json({ success: false, message: 'First-admin setup is not configured. Set ADMIN_EMAIL on the server, then try again.' });
+      }
+      if (email !== bootstrapEmail) {
+        return res.status(403).json({ success: false, message: 'The first administrator email must match the server-configured ADMIN_EMAIL.' });
+      }
+      user = await createFirstAdminIfAbsent({ name, email, phone, passwordHash, referredBy: null });
+      if (!user) return res.status(403).json({ success: false, message: 'The first administrator has already registered. Ask an administrator for a staff signup code.' });
     }
-    if (email !== bootstrapEmail) {
-      return res.status(403).json({ success: false, message: 'The first administrator email must match the server-configured ADMIN_EMAIL.' });
-    }
-    user = await createFirstAdminIfAbsent({ name, email, phone, passwordHash, referredBy });
-    if (!user) return res.status(403).json({ success: false, message: 'The first administrator has already registered. Ask an administrator for a staff signup code.' });
+  } catch (err) {
+    const field = duplicateUserField(err);
+    if (field) return res.status(409).json(DUPLICATE_MESSAGES[field] || DUPLICATE_MESSAGES.email);
+    throw err;
   }
-
-  const rawToken = generateOpaqueToken();
-  await createToken('verify', { userId: user.id, tokenHash: hashOpaqueToken(rawToken), ttlMs: 24 * 60 * 60 * 1000 });
-  sendVerificationEmail(user.email, `${APP_URL}/auth/verify-email?token=${rawToken}`).catch((e) =>
-    console.error('Failed to send staff verification email:', e)
-  );
-  await establishSession(req, res, user);
+  await sendVerification(user);
   await logAudit({ actorId: user.id, actorName: user.name, action: 'STAFF_REGISTER', entity: 'User', entityId: user.id, newValue: user.role, ip: req.ip });
-  res.status(201).json({ success: true, user: toSafeUser(user), permissions: PERMISSIONS[user.role] });
+  res.status(201).json({
+    success: true,
+    requiresLogin: true,
+    message: 'Staff account created. Please sign in to continue.',
+    user: { id: user.id, name: user.name, email: user.email, role: user.role }
+  });
 });
 
+// -----------------------------------------------------------------------
+// Referrals — each code is valid for 3 hours; generating a new one revokes
+// the previous one.
+// -----------------------------------------------------------------------
 router.get('/referrals', requireAuth, async (req, res) => {
   res.json({ success: true, ...(await getReferralSummary(req.user.id)) });
+});
+
+router.post('/referrals/code', requireAuth, referralCodeLimiter, async (req, res) => {
+  if (req.user.role !== 'CUSTOMER') {
+    return res.status(403).json({ success: false, message: 'Referral codes are for customer accounts only.' });
+  }
+  try {
+    const code = await generateReferralCode(req.user.id, { ip: req.ip });
+    await logAudit({ actorId: req.user.id, actorName: req.user.name, action: 'REFERRAL_CODE_GENERATED', entity: 'Referral', entityId: code.id, ip: req.ip });
+    res.status(201).json({ success: true, code: code.code, expiresAt: code.expiresAt });
+  } catch (err) {
+    if (err instanceof ReferralError) return res.status(err.status).json({ success: false, message: err.message });
+    throw err;
+  }
 });
 
 // -----------------------------------------------------------------------
@@ -205,7 +263,7 @@ router.post('/login', authLimiter, async (req, res) => {
   if (!parsed.success) {
     return res.status(400).json({ success: false, message: 'Invalid email or password' });
   }
-  const { email, password } = parsed.data;
+  const { email, password, portal } = parsed.data;
   const genericError = { success: false, message: 'Invalid email or password' };
 
   const user = await findUserByEmail(email);
@@ -233,12 +291,29 @@ router.post('/login', authLimiter, async (req, res) => {
     return res.status(401).json(genericError);
   }
 
+  // Each kind of account has one front door. The password was correct, so
+  // saying which portal to use reveals nothing an attacker could exploit.
+  const isStaffAccount = user.role === 'ADMIN' || user.role === 'SALES_MANAGER';
+  if (isStaffAccount && portal !== 'staff') {
+    await logAudit({ actorId: user.id, actorName: user.name, action: 'LOGIN_WRONG_PORTAL', entity: 'Authentication', newValue: 'store', ip: req.ip });
+    return res.status(403).json({ success: false, code: 'USE_STAFF_PORTAL', message: 'Staff accounts sign in through the Staff Portal only.', portalUrl: '/admin/login' });
+  }
+  if (!isStaffAccount && portal === 'staff') {
+    return res.status(403).json({ success: false, code: 'USE_STORE_SIGNIN', message: 'This portal is for staff only. Customers sign in on the store.', portalUrl: '/auth' });
+  }
+
   await clearFailedLogins(user.id);
   await recordLoginAttempt({ email, ip: req.ip, success: true });
-  await establishSession(req, res, user);
+  const session = await establishSession(req, res, user);
   await logAudit({ actorId: user.id, actorName: user.name, action: 'LOGIN_SUCCESS', entity: 'Authentication', ip: req.ip });
 
-  res.json({ success: true, user: toSafeUser(user), permissions: PERMISSIONS[user.role] });
+  res.json({
+    success: true,
+    user: toSafeUser(user),
+    permissions: PERMISSIONS[user.role],
+    sessionExpiresAt: session.expiresAt,
+    sessionTtlSeconds: sessionTtlSeconds()
+  });
 });
 
 router.post('/logout', async (req, res) => {
@@ -263,11 +338,17 @@ router.post('/logout-all', requireAuth, async (req, res) => {
 });
 
 router.get('/me', async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
   if (!req.user) {
-    return res.json({ success: true, user: null, permissions: [] });
+    return res.json({ success: true, user: null, permissions: [], sessionExpired: !!req.sessionExpired });
   }
   const user = await findUserById(req.user.id);
-  res.json({ success: true, user: toSafeUser(user), permissions: PERMISSIONS[req.user.role] || [] });
+  res.json({
+    success: true,
+    user: toSafeUser(user),
+    permissions: PERMISSIONS[req.user.role] || [],
+    sessionExpiresAt: req.user.sessionExpiresAt
+  });
 });
 
 router.put('/profile', requireAuth, async (req, res) => {
@@ -275,9 +356,70 @@ router.put('/profile', requireAuth, async (req, res) => {
   if (!parsed.success) {
     return res.status(400).json({ success: false, message: formatZodError(parsed.error) });
   }
-  const updated = await updateUserProfile(req.user.id, parsed.data);
+  const patch = { ...parsed.data };
+  if (patch.phone !== undefined) {
+    patch.phone = patch.phone ? normalizeKenyanPhone(patch.phone) : null;
+    if (!patch.phone && req.user.role === 'CUSTOMER') {
+      return res.status(400).json({ success: false, message: 'Customers need a phone number for M-Pesa and delivery.' });
+    }
+    const owner = patch.phone ? await findUserByPhone(patch.phone) : null;
+    if (owner && owner.id !== req.user.id) return res.status(409).json(DUPLICATE_MESSAGES.phone);
+  }
+  let updated;
+  try {
+    updated = await updateUserProfile(req.user.id, patch);
+  } catch (err) {
+    if (duplicateUserField(err) === 'phone') return res.status(409).json(DUPLICATE_MESSAGES.phone);
+    throw err;
+  }
   await logAudit({ actorId: req.user.id, actorName: req.user.name, action: 'PROFILE_UPDATE', entity: 'User', entityId: req.user.id, ip: req.ip });
   res.json({ success: true, user: toSafeUser(updated) });
+});
+
+// Change password while signed in. Every other session is signed out; this
+// one is re-issued so the user stays signed in here.
+router.post('/change-password', requireAuth, authLimiter, async (req, res) => {
+  const parsed = changePasswordSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ success: false, message: formatZodError(parsed.error) });
+  const { currentPassword, newPassword } = parsed.data;
+  const user = await findUserById(req.user.id);
+  if (!user || !(await verifyPassword(user.passwordHash, currentPassword))) {
+    return res.status(400).json({ success: false, message: 'Your current password is incorrect.' });
+  }
+  const strength = validatePasswordStrength(newPassword);
+  if (!strength.valid) return res.status(400).json({ success: false, message: strength.errors.join('. ') });
+  if (await verifyPassword(user.passwordHash, newPassword)) {
+    return res.status(400).json({ success: false, message: 'Choose a password different from your current one.' });
+  }
+  await updateUserPassword(user.id, await hashPassword(newPassword));
+  await revokeAllSessionsForUser(user.id);
+  const session = await establishSession(req, res, user);
+  await logAudit({ actorId: user.id, actorName: user.name, action: 'PASSWORD_CHANGED', entity: 'Authentication', ip: req.ip });
+  res.json({ success: true, message: 'Password changed. Other devices have been signed out.', sessionExpiresAt: session.expiresAt });
+});
+
+// Change the sign-in email. Needs the current password; the new address must
+// be unused and is re-verified.
+router.put('/email', requireAuth, authLimiter, async (req, res) => {
+  const parsed = changeEmailSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ success: false, message: formatZodError(parsed.error) });
+  const { email, currentPassword } = parsed.data;
+  const user = await findUserById(req.user.id);
+  if (!user || !(await verifyPassword(user.passwordHash, currentPassword))) {
+    return res.status(400).json({ success: false, message: 'Your current password is incorrect.' });
+  }
+  if (email === user.email) return res.status(400).json({ success: false, message: 'That is already your email address.' });
+  if (await findUserByEmail(email)) return res.status(409).json(DUPLICATE_MESSAGES.email);
+  let updated;
+  try {
+    updated = await updateUserEmail(user.id, email);
+  } catch (err) {
+    if (duplicateUserField(err) === 'email') return res.status(409).json(DUPLICATE_MESSAGES.email);
+    throw err;
+  }
+  await sendVerification(updated);
+  await logAudit({ actorId: user.id, actorName: user.name, action: 'EMAIL_CHANGED', entity: 'User', entityId: user.id, previousValue: user.email, newValue: email, ip: req.ip });
+  res.json({ success: true, user: toSafeUser(updated), message: `Email updated. We sent a verification link to ${email}.` });
 });
 
 // -----------------------------------------------------------------------
@@ -293,7 +435,7 @@ router.post('/forgot-password', authLimiter, async (req, res) => {
   if (user) {
     const rawToken = generateOpaqueToken();
     await createToken('reset', { userId: user.id, tokenHash: hashOpaqueToken(rawToken), ttlMs: 30 * 60 * 1000 });
-    sendPasswordResetEmail(user.email, `${APP_URL}/auth/reset-password?token=${rawToken}`).catch((e) =>
+    sendPasswordResetEmail(user.email, `${APP_URL}/auth/reset-password?token=${rawToken}`, user.name).catch((e) =>
       console.error('Failed to send password reset email:', e)
     );
     await logAudit({ actorId: user.id, actorName: user.name, action: 'PASSWORD_RESET_REQUESTED', entity: 'Authentication', ip: req.ip });
@@ -347,10 +489,7 @@ router.post('/verify-email', async (req, res) => {
     return res.status(400).json({ success: false, message: 'This verification link is invalid or has expired.' });
   }
   await markEmailVerified(record.userId);
-  const verifiedUser = await findUserById(record.userId);
-  if (verifiedUser?.referredBy) {
-    await issueReferralRewards(verifiedUser.referredBy);
-  }
+  await qualifyReferral(record.userId);
   res.json({ success: true, message: 'Email verified successfully.' });
 });
 

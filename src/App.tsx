@@ -19,6 +19,8 @@ import { CustomerDashboardPage } from './pages/CustomerDashboardPage';
 import { WishlistPage } from './pages/WishlistPage';
 import { BlogPage } from './pages/BlogPage';
 import { BlogPostPage } from './pages/BlogPostPage';
+import { NewsPage } from './pages/NewsPage';
+import { NewsArticlePage } from './pages/NewsArticlePage';
 import { StoreLocatorPage } from './pages/StoreLocatorPage';
 import { AboutUsPage } from './pages/AboutUsPage';
 import { ContactUsPage } from './pages/ContactUsPage';
@@ -38,7 +40,7 @@ import { AdminPage } from './pages/admin/AdminPage';
 import { RequireRole } from './components/auth/RequireRole';
 
 import { ThemeProvider } from './context/ThemeContext';
-import { navigate } from './utils/navigation';
+import { navigate, restoreScroll } from './utils/navigation';
 
 export const App: React.FC = () => {
   const [currentLocation, setCurrentLocation] = useState(
@@ -48,6 +50,11 @@ export const App: React.FC = () => {
   useEffect(() => {
     const handleLocationChange = () => {
       setCurrentLocation(window.location.pathname + window.location.search);
+    };
+    // Real Back/Forward (navigate() dispatches a synthetic popstate that is
+    // not trusted, and handles its own scrolling).
+    const handleHistoryMove = (e: PopStateEvent) => {
+      if (e.isTrusted) restoreScroll();
     };
 
     const handleGlobalClick = (e: MouseEvent) => {
@@ -78,11 +85,13 @@ export const App: React.FC = () => {
     };
 
     window.addEventListener('popstate', handleLocationChange);
+    window.addEventListener('popstate', handleHistoryMove);
     window.addEventListener('app:locationchange', handleLocationChange);
     document.addEventListener('click', handleGlobalClick);
 
     return () => {
       window.removeEventListener('popstate', handleLocationChange);
+      window.removeEventListener('popstate', handleHistoryMove);
       window.removeEventListener('app:locationchange', handleLocationChange);
       document.removeEventListener('click', handleGlobalClick);
     };
@@ -108,6 +117,8 @@ export const App: React.FC = () => {
       );
     }
     if (pathname.startsWith('/wishlist')) return <WishlistPage key={currentLocation} />;
+    if (pathname.startsWith('/news/')) return <NewsArticlePage key={currentLocation} />;
+    if (pathname === '/news' || pathname.startsWith('/news?')) return <NewsPage key={currentLocation} />;
     if (pathname.startsWith('/blog/')) return <BlogPostPage key={currentLocation} />;
     if (pathname.startsWith('/blog')) return <BlogPage key={currentLocation} />;
     if (pathname.startsWith('/store-locator') || pathname.startsWith('/stores')) return <StoreLocatorPage key={currentLocation} />;

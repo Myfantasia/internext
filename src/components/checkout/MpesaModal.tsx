@@ -1,233 +1,178 @@
-import React, { useState, useEffect } from 'react';
-import {
-  Smartphone,
-  CheckCircle2,
-  AlertCircle,
-  Lock,
-  ArrowRight,
-  RefreshCw,
-  Zap,
-  ShieldCheck,
-  X
-} from 'lucide-react';
-import confetti from 'canvas-confetti';
+import React, { useEffect, useRef, useState } from 'react';
+import { Smartphone, CheckCircle2, AlertCircle, Loader2, RefreshCw, ShieldCheck, X, Clock } from 'lucide-react';
 import { useStore } from '../../context/StoreContext';
+import { Portal, useBodyScrollLock } from '../common/Overlay';
 
 interface MpesaModalProps {
   orderId: string;
   orderNumber: string;
   phone: string;
   amount: number;
-  onSuccess: (verifiedOrder: any) => void;
-  onCancel: () => void;
+  onSuccess: (orderNumber: string) => void;
+  onClose: () => void;
 }
 
-export const MpesaModal: React.FC<MpesaModalProps> = ({
-  orderId,
-  orderNumber,
-  phone,
-  amount,
-  onSuccess,
-  onCancel
-}) => {
-  const { formatPrice, settings } = useStore();
-  const [step, setStep] = useState<'prompt' | 'simulating' | 'success' | 'failed'>('prompt');
-  const [pinInput, setPinInput] = useState<string>('');
-  const [mpesaReceipt, setMpesaReceipt] = useState<string>('');
-  const [errorMessage, setErrorMessage] = useState<string>('');
-  const [checkoutRequestId, setCheckoutRequestId] = useState<string>('');
+type Step = 'confirm' | 'sending' | 'waiting' | 'success' | 'failed';
 
-  // Format phone display
-  const cleanPhone = phone.startsWith('0') ? '254' + phone.slice(1) : phone;
+const POLL_MS = 3000;
+const GIVE_UP_MS = 3.5 * 60 * 1000;
 
-  useEffect(() => {
-    // Initiate STK Push on modal mount
-    fetch(`/api/orders/${orderId}/mpesa-stk`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ phone: cleanPhone })
-    })
-      .then((res) => res.json())
-      .then((data) => {
-        if (data.CheckoutRequestID) {
-          setCheckoutRequestId(data.CheckoutRequestID);
-          setMpesaReceipt(data.mpesaReceipt || `QKD${Date.now().toString().slice(-6)}XLP`);
-        }
-      })
-      .catch((e) => console.error(e));
-  }, [orderId, cleanPhone]);
+// STK Push flow. The customer types their M-Pesa PIN on their PHONE only —
+// this page never asks for it. Success is shown only after the server has
+// confirmed the payment with Safaricom.
+export const MpesaModal: React.FC<MpesaModalProps> = ({ orderId, orderNumber, phone, amount, onSuccess, onClose }) => {
+  const { formatPrice } = useStore();
+  useBodyScrollLock();
+  const [step, setStep] = useState<Step>('confirm');
+  const [payPhone, setPayPhone] = useState(phone);
+  const [message, setMessage] = useState('');
+  const [simulated, setSimulated] = useState(false);
+  const pollRef = useRef<number | null>(null);
+  const startedAt = useRef<number>(0);
+  const dialogRef = useRef<HTMLDivElement>(null);
 
-  const handleSimulatePin = async () => {
-    if (pinInput.length !== 4) {
-      setErrorMessage('Please enter a 4-digit M-Pesa PIN');
+  const stopPolling = () => {
+    if (pollRef.current) window.clearTimeout(pollRef.current);
+    pollRef.current = null;
+  };
+  useEffect(() => () => stopPolling(), []);
+  useEffect(() => { dialogRef.current?.focus(); }, []);
+
+  const poll = async () => {
+    try {
+      const res = await fetch(`/api/payments/orders/${orderId}/status`, { cache: 'no-store' });
+      const data = await res.json();
+      if (data.paymentStatus === 'Paid') {
+        setStep('success');
+        stopPolling();
+        window.setTimeout(() => onSuccess(orderNumber), 1500);
+        return;
+      }
+      const attempt = data.attempt;
+      if (attempt && ['failed', 'cancelled'].includes(attempt.status)) {
+        setStep('failed');
+        setMessage(attempt.failureReason || 'The M-Pesa payment was not completed.');
+        stopPolling();
+        return;
+      }
+    } catch {
+      // transient network error — keep polling
+    }
+    if (Date.now() - startedAt.current > GIVE_UP_MS) {
+      setStep('failed');
+      setMessage("We haven't received confirmation from M-Pesa yet. If money left your account, don't pay again — it will reflect on your order shortly, or contact us with your M-Pesa message.");
       return;
     }
+    pollRef.current = window.setTimeout(poll, POLL_MS);
+  };
 
-    setStep('simulating');
-
+  const sendPrompt = async () => {
+    setStep('sending');
+    setMessage('');
     try {
-      // Simulate Safaricom processing delay
-      setTimeout(async () => {
-        const res = await fetch(`/api/orders/${orderId}/mpesa-verify`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            checkoutRequestId,
-            mpesaReceipt: mpesaReceipt || `QKD${Date.now().toString().slice(-6)}XLP`
-          })
-        });
-        const data = await res.json();
-
-        if (data.success) {
-          setStep('success');
-          confetti({
-            particleCount: 120,
-            spread: 80,
-            origin: { y: 0.6 }
-          });
-          setTimeout(() => {
-            onSuccess(data.order);
-          }, 2000);
-        } else {
-          setStep('failed');
-          setErrorMessage(data.message || 'Payment could not be verified.');
-        }
-      }, 1500);
-    } catch (e) {
+      const res = await fetch(`/api/payments/orders/${orderId}/start`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider: 'mpesa', phone: payPhone })
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        setStep('failed');
+        setMessage(data.message || 'We could not send the M-Pesa prompt.');
+        return;
+      }
+      setSimulated(!!data.simulated);
+      setMessage(data.customerMessage || '');
+      setStep('waiting');
+      startedAt.current = Date.now();
+      pollRef.current = window.setTimeout(poll, POLL_MS);
+    } catch {
       setStep('failed');
-      setErrorMessage('Network timeout during M-Pesa validation');
+      setMessage('Unable to reach the server. Check your connection and try again.');
     }
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md animate-in fade-in duration-200">
-      <div className="bg-slate-900 border border-slate-700/80 rounded-3xl max-w-md w-full overflow-hidden shadow-2xl relative">
-        {/* Top Header */}
-        <div className="bg-emerald-700 p-5 text-white flex items-center justify-between">
+    <Portal>
+    <div className="modal-backdrop" onKeyDown={(e) => { if (e.key === 'Escape' && step !== 'sending') onClose(); }}>
+      <div ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="mpesa-title" className="modal-panel modal-medium outline-none !overflow-y-auto">
+        <div className="bg-emerald-700 px-5 py-4 text-white flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-white/20 flex items-center justify-center">
-              <Smartphone className="w-6 h-6 text-white" />
-            </div>
+            <div className="w-10 h-10 rounded-2xl bg-white/20 grid place-items-center"><Smartphone className="w-5 h-5" aria-hidden="true" /></div>
             <div>
-              <h3 className="font-black text-base">Lipa na M-PESA Online</h3>
-              <p className="text-xs text-emerald-100 font-mono">Paybill: {settings.mpesaPaybill || '522522'}</p>
+              <h2 id="mpesa-title" className="font-black text-base text-white">Pay with M-Pesa</h2>
+              <p className="text-xs text-emerald-100">Order {orderNumber} · {formatPrice(amount)}</p>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={onCancel}
-            className="p-1 rounded-lg text-emerald-100 hover:text-white hover:bg-white/10"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          {step !== 'sending' && (
+            <button type="button" onClick={onClose} className="p-1.5 rounded-lg text-emerald-50 hover:bg-white/15" aria-label="Close">
+              <X className="w-5 h-5" aria-hidden="true" />
+            </button>
+          )}
         </div>
 
-        {/* Modal Body */}
-        <div className="p-6 space-y-5 text-xs">
-          {step === 'prompt' && (
-            <div className="space-y-4">
-              <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-2">
-                <div className="flex justify-between text-slate-400">
-                  <span>Merchant:</span>
-                  <strong className="text-white">{settings.storeName}</strong>
-                </div>
-                <div className="flex justify-between text-slate-400">
-                  <span>Order Reference:</span>
-                  <strong className="text-cyan-400 font-mono">{orderNumber}</strong>
-                </div>
-                <div className="flex justify-between text-slate-400">
-                  <span>Recipient Phone:</span>
-                  <strong className="text-white font-mono">+{cleanPhone}</strong>
-                </div>
-                <div className="flex justify-between text-slate-400 pt-2 border-t border-slate-800 text-sm">
-                  <span className="font-bold text-white">Amount Due:</span>
-                  <span className="font-black text-emerald-400 text-base">{formatPrice(amount)}</span>
-                </div>
+        <div className="p-6 space-y-5" aria-live="polite">
+          {step === 'confirm' && (
+            <>
+              <p className="text-sm text-slate-300">We'll send a payment request to this Safaricom number. Approve it on your phone by entering your M-Pesa PIN.</p>
+              <div>
+                <label htmlFor="mpesa-phone" className="field-label">M-Pesa phone number</label>
+                <input id="mpesa-phone" type="tel" inputMode="tel" value={payPhone} onChange={(e) => setPayPhone(e.target.value)} className="field-input font-mono" autoComplete="tel" />
               </div>
-
-              {/* Simulated SIM Toolkit Prompt Mockup */}
-              <div className="p-4 rounded-2xl bg-slate-800/80 border border-slate-700 space-y-3">
-                <div className="flex items-center gap-2 text-cyan-400 font-bold">
-                  <Lock className="w-4 h-4" />
-                  <span>Enter M-Pesa PIN (Simulated STK Push):</span>
-                </div>
-                <p className="text-[11px] text-slate-300">
-                  A real STK Push prompt was dispatched to +{cleanPhone}. For this live preview demonstration, enter any 4-digit PIN to authenticate payment.
-                </p>
-
-                <div className="space-y-2">
-                  <input
-                    type="password"
-                    maxLength={4}
-                    value={pinInput}
-                    onChange={(e) => {
-                      setPinInput(e.target.value.replace(/\D/g, ''));
-                      setErrorMessage('');
-                    }}
-                    placeholder="Enter 4-Digit M-Pesa PIN"
-                    className="w-full text-center tracking-widest text-lg font-black bg-slate-950 border border-slate-600 rounded-xl py-2.5 text-white focus:outline-none focus:border-emerald-500 font-mono"
-                    autoFocus
-                  />
-                  {errorMessage && (
-                    <div className="text-rose-400 font-bold text-center">{errorMessage}</div>
-                  )}
-                </div>
-
-                <button
-                  type="button"
-                  onClick={handleSimulatePin}
-                  className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs rounded-xl flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/30 transition-all active:scale-98"
-                >
-                  <Zap className="w-4 h-4" />
-                  <span>Authorize KES {amount.toLocaleString()} Payment</span>
-                </button>
+              <div className="callout callout-info">
+                <ShieldCheck className="w-4 h-4 shrink-0 mt-0.5" aria-hidden="true" />
+                <p>Never share your M-Pesa PIN. We will never ask for it on this website, by phone or by SMS.</p>
               </div>
+              <button type="button" onClick={sendPrompt} className="btn btn-primary btn-lg w-full !bg-emerald-600 hover:!bg-emerald-500">
+                Send payment request of {formatPrice(Math.ceil(amount))}
+              </button>
+            </>
+          )}
+
+          {step === 'sending' && (
+            <div className="py-6 text-center space-y-3">
+              <Loader2 className="w-10 h-10 mx-auto animate-spin text-emerald-400" aria-hidden="true" />
+              <p className="text-sm text-slate-300">Contacting M-Pesa…</p>
             </div>
           )}
 
-          {step === 'simulating' && (
-            <div className="py-12 text-center space-y-4">
-              <div className="w-16 h-16 rounded-full border-4 border-emerald-500 border-t-transparent animate-spin mx-auto" />
-              <div className="space-y-1">
-                <h4 className="text-base font-bold text-white">Communicating with Safaricom Daraja...</h4>
-                <p className="text-slate-400">Verifying transaction receipt {mpesaReceipt}</p>
+          {step === 'waiting' && (
+            <div className="py-2 text-center space-y-4">
+              <div className="mx-auto w-16 h-16 rounded-2xl bg-emerald-950/60 border border-emerald-800 grid place-items-center">
+                <Smartphone className="w-8 h-8 text-emerald-400 animate-pulse" aria-hidden="true" />
               </div>
+              <div>
+                <h3 className="font-bold text-white">Check your phone</h3>
+                <p className="text-sm text-slate-400 mt-1">Enter your M-Pesa PIN in the prompt on <span className="font-mono text-slate-200">{payPhone}</span> to approve {formatPrice(Math.ceil(amount))}.</p>
+              </div>
+              {simulated && <p className="callout callout-warning text-left">Development simulation: no real prompt is sent. The payment will confirm automatically in a few seconds.</p>}
+              <p className="text-xs text-slate-500 flex items-center justify-center gap-1.5"><Clock className="w-3.5 h-3.5" aria-hidden="true" />Waiting for confirmation from Safaricom…</p>
             </div>
           )}
 
           {step === 'success' && (
-            <div className="py-8 text-center space-y-4">
-              <div className="w-16 h-16 rounded-full bg-emerald-950/80 border-2 border-emerald-500 text-emerald-400 mx-auto flex items-center justify-center animate-bounce">
-                <CheckCircle2 className="w-10 h-10" />
-              </div>
-              <div className="space-y-1">
-                <h4 className="text-lg font-black text-white">Payment Confirmed!</h4>
-                <p className="text-xs text-emerald-400 font-mono">M-Pesa Receipt: {mpesaReceipt}</p>
-                <p className="text-xs text-slate-300">Your order has been moved to Processing.</p>
-              </div>
+            <div className="py-4 text-center space-y-3">
+              <CheckCircle2 className="w-14 h-14 mx-auto text-emerald-400" aria-hidden="true" />
+              <h3 className="font-bold text-white text-lg">Payment confirmed</h3>
+              <p className="text-sm text-slate-400">Thank you! Opening your order…</p>
             </div>
           )}
 
           {step === 'failed' && (
-            <div className="py-6 text-center space-y-4">
-              <div className="w-16 h-16 rounded-full bg-rose-950 text-rose-400 mx-auto flex items-center justify-center">
-                <AlertCircle className="w-8 h-8" />
+            <div className="space-y-4">
+              <div className="callout callout-danger" role="alert">
+                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" aria-hidden="true" />
+                <p>{message}</p>
               </div>
-              <div className="space-y-1">
-                <h4 className="text-base font-bold text-white">Payment Incomplete</h4>
-                <p className="text-xs text-rose-400">{errorMessage}</p>
+              <div className="flex flex-col sm:flex-row gap-2">
+                <button type="button" onClick={() => setStep('confirm')} className="btn btn-primary flex-1"><RefreshCw className="w-4 h-4" aria-hidden="true" /> Try again</button>
+                <button type="button" onClick={onClose} className="btn btn-secondary flex-1">Choose another method</button>
               </div>
-              <button
-                type="button"
-                onClick={() => setStep('prompt')}
-                className="px-6 py-2.5 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-bold"
-              >
-                Try Again
-              </button>
             </div>
           )}
         </div>
       </div>
     </div>
+    </Portal>
   );
 };

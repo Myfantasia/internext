@@ -12,7 +12,7 @@ export const ImageUploadField: React.FC<ImageUploadFieldProps> = ({
   value,
   onChange,
   label = 'Product image',
-  hint = 'JPG, PNG, WebP or GIF up to 8 MB'
+  hint = 'JPG, PNG, WebP or GIF up to 4 MB'
 }) => {
   const inputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
@@ -25,8 +25,8 @@ export const ImageUploadField: React.FC<ImageUploadFieldProps> = ({
       setError('Please choose an image file (JPG, PNG, WebP, or GIF).');
       return;
     }
-    if (file.size > 8 * 1024 * 1024) {
-      setError('Image must be 8 MB or smaller.');
+    if (file.size > 4 * 1024 * 1024) {
+      setError('Image must be 4 MB or smaller. Try a compressed JPG or WebP.');
       return;
     }
 

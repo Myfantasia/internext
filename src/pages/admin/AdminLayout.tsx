@@ -19,7 +19,11 @@ import {
   Newspaper,
   Mail,
   UserPlus,
-  Gift
+  Gift,
+  Zap,
+  Truck,
+  CreditCard,
+  UserCircle
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
@@ -36,6 +40,8 @@ type NavItem = {
   label: string;
   icon: React.ComponentType<{ className?: string }>;
   adminOnly?: boolean;
+  /** Shown only to staff whose role grants this permission (same map the API enforces). */
+  permission?: string;
 };
 
 type NavGroup = {
@@ -46,7 +52,10 @@ type NavGroup = {
 const NAV_GROUPS: NavGroup[] = [
   {
     label: 'Overview',
-    items: [{ id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard }]
+    items: [
+      { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+      { id: 'profile', label: 'My Profile', icon: UserCircle }
+    ]
   },
   {
     label: 'Catalog',
@@ -58,20 +67,29 @@ const NAV_GROUPS: NavGroup[] = [
     ]
   },
   {
-    label: 'Commerce',
+    label: 'Sales',
     items: [
       { id: 'orders', label: 'Orders', icon: ShoppingCart },
+      { id: 'payments', label: 'Payments', icon: CreditCard, permission: 'payments:read' },
+      { id: 'delivery', label: 'Delivery Pricing', icon: Truck, permission: 'delivery:read' },
       { id: 'customers', label: 'Customers', icon: Users }
     ]
   },
   {
-    label: 'Marketing & Content',
+    label: 'Marketing',
     items: [
-      { id: 'coupons', label: 'Promotions', icon: Tag },
-      { id: 'referrals', label: 'Referral Rewards', icon: Gift, adminOnly: true },
-      { id: 'blog', label: 'Blog', icon: Newspaper, adminOnly: true },
+      { id: 'coupons', label: 'Promo Codes', icon: Tag },
+      { id: 'flash-deals', label: 'Flash Deals', icon: Zap, permission: 'flash_deals:read' },
+      { id: 'referrals', label: 'Referral Rewards', icon: Gift, permission: 'referrals:read' },
       { id: 'reviews', label: 'Reviews', icon: Star },
       { id: 'newsletter', label: 'Newsletter', icon: Mail, adminOnly: true }
+    ]
+  },
+  {
+    label: 'Content',
+    items: [
+      { id: 'news', label: 'Tech News & Guides', icon: Newspaper, permission: 'news:read' },
+      { id: 'blog', label: 'Blog', icon: FileText, adminOnly: true }
     ]
   },
   {
@@ -81,20 +99,20 @@ const NAV_GROUPS: NavGroup[] = [
   {
     label: 'Administration',
     items: [
-      { id: 'staff', label: 'Staff Invites', icon: UserPlus, adminOnly: true },
+      { id: 'staff', label: 'Staff', icon: UserPlus, adminOnly: true },
       { id: 'audit', label: 'Audit Logs', icon: FileText, adminOnly: true },
-      { id: 'settings', label: 'Store Settings', icon: SettingsIcon, adminOnly: true }
+      { id: 'settings', label: 'Settings', icon: SettingsIcon, adminOnly: true }
     ]
   }
 ];
 
 export const AdminLayout: React.FC<AdminLayoutProps> = ({ activeTab, setActiveTab, children }) => {
-  const { user, logout, isAdmin } = useAuth();
+  const { user, logout, isAdmin, can } = useAuth();
   const { theme, toggleTheme } = useTheme();
 
   const groups = NAV_GROUPS.map((group) => ({
     ...group,
-    items: group.items.filter((item) => !item.adminOnly || isAdmin)
+    items: group.items.filter((item) => (!item.adminOnly || isAdmin) && (!item.permission || can(item.permission)))
   })).filter((group) => group.items.length > 0);
 
   const flatItems = groups.flatMap((g) => g.items);
@@ -102,26 +120,33 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ activeTab, setActiveTa
 
   return (
     <div className="min-h-screen flex bg-slate-950 text-slate-100 selection:bg-cyan-600 selection:text-white">
-      <aside className="w-64 bg-slate-900 border-r border-slate-800 flex flex-col justify-between shrink-0 hidden md:flex">
+      <aside className="w-64 bg-slate-900 border-r border-slate-800 flex-col justify-between shrink-0 hidden md:flex md:sticky md:top-0 md:h-dvh self-start">
         <div className="p-5 border-b border-slate-800 space-y-3">
           <a href="/" className="flex items-center gap-2.5">
             <Logo size={32} titleClassName="text-white text-sm" taglineClassName="text-cyan-400 !text-[9px]" />
           </a>
 
-          <div className="p-2.5 rounded-xl bg-slate-950 border border-slate-800 flex items-center gap-2.5">
-            <img
-              src={user?.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=200&auto=format&fit=crop&q=80'}
-              alt=""
-              className="w-7 h-7 rounded-lg object-cover ring-1 ring-cyan-500"
-            />
+          <button
+            type="button"
+            onClick={() => setActiveTab('profile')}
+            title="Open my profile"
+            className="w-full text-left p-2.5 rounded-xl bg-slate-950 border border-slate-800 hover:border-cyan-700 flex items-center gap-2.5 transition-colors"
+          >
+            {user?.avatar ? (
+              <img src={user.avatar} alt="" className="w-7 h-7 rounded-lg object-cover ring-1 ring-cyan-500" />
+            ) : (
+              <span className="w-7 h-7 rounded-lg bg-cyan-950 ring-1 ring-cyan-500 grid place-items-center text-[10px] font-black text-cyan-300" aria-hidden="true">
+                {(user?.name || '?').split(/\s+/).slice(0, 2).map((p) => p[0]?.toUpperCase()).join('')}
+              </span>
+            )}
             <div className="min-w-0 flex-1">
-              <div className="text-xs font-bold text-white truncate">{user?.name || 'Super Admin'}</div>
+              <div className="text-xs font-bold text-white truncate">{user?.name || 'Staff'}</div>
               <div className="text-[10px] text-amber-400 font-mono uppercase">{user?.role?.replace('_', ' ')}</div>
             </div>
-          </div>
+          </button>
         </div>
 
-        <nav className="p-3 overflow-y-auto flex-1 space-y-4">
+        <nav className="p-3 overflow-y-auto overscroll-contain flex-1 min-h-0 space-y-4">
           {groups.map((group) => (
             <div key={group.label}>
               <div className="px-3 mb-1.5 text-[10px] font-black uppercase tracking-[0.14em] text-slate-500">
@@ -135,6 +160,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ activeTab, setActiveTa
                     <button
                       key={item.id}
                       type="button"
+                      aria-current={isActive ? 'page' : undefined}
                       onClick={() => setActiveTab(item.id)}
                       className={`w-full flex items-center gap-3 px-3 py-2 rounded-xl text-xs font-bold transition-all ${
                         isActive
@@ -173,7 +199,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ activeTab, setActiveTa
       </aside>
 
       <div className="flex-1 flex flex-col min-w-0">
-        <header className="bg-slate-900 border-b border-slate-800 px-4 sm:px-6 py-3.5 flex items-center justify-between gap-4">
+        <header className="sticky top-0 z-30 bg-slate-900 border-b border-slate-800 px-4 sm:px-6 py-3.5 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3 min-w-0">
             <div className="md:hidden">
               <select
@@ -218,10 +244,6 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ activeTab, setActiveTa
               )}
             </button>
 
-            <span className="hidden lg:inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-950 border border-emerald-800 text-emerald-400 font-bold text-[11px]">
-              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-              <span>API & M-Pesa Online</span>
-            </span>
 
             <a
               href="/"
@@ -233,7 +255,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ activeTab, setActiveTa
           </div>
         </header>
 
-        <main className="p-6 sm:p-8 flex-1 overflow-y-auto">{children}</main>
+        <main className="p-4 sm:p-6 lg:p-8 flex-1 min-w-0">{children}</main>
       </div>
     </div>
   );

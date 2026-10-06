@@ -31,7 +31,10 @@ import { useCart } from '../context/CartContext';
 import { useWishlist } from '../context/WishlistContext';
 import { useCompare } from '../context/CompareContext';
 import { useToast } from '../context/ToastContext';
-import { Product, ProductVariant, Review } from '../types';
+import { Product, ProductVariant, Review, RatingSummary } from '../types';
+import { ProductReviews } from '../components/reviews/ProductReviews';
+import { StarDisplay } from '../components/reviews/StarRating';
+import { DealCountdown } from '../components/common/DealCountdown';
 
 import { initialProducts, initialReviews } from '../data/mockData';
 
@@ -60,6 +63,9 @@ export const ProductDetailPage: React.FC = () => {
     return initialReviews.filter((r) => r.productId === initialFound.id);
   });
   const [loading, setLoading] = useState<boolean>(!initialFound);
+  const [ratingSummary, setRatingSummary] = useState<RatingSummary | null>(null);
+  const [bundleProduct, setBundleProduct] = useState<Product | null>(null);
+  const [includeBundle, setIncludeBundle] = useState(true);
 
   // Gallery state
   const [selectedImage, setSelectedImage] = useState<string>(
@@ -69,7 +75,8 @@ export const ProductDetailPage: React.FC = () => {
     initialFound && initialFound.variants && initialFound.variants.length > 0 ? initialFound.variants[0] : null
   );
   const [quantity, setQuantity] = useState<number>(1);
-  const [activeTab, setActiveTab] = useState<'specs' | 'description' | 'reviews' | 'warranty'>('specs');
+  const [activeTab, setActiveTab] = useState<'specs' | 'description' | 'reviews' | 'warranty'>(() =>
+    new URLSearchParams(window.location.search).get('review') === 'edit' ? 'reviews' : 'description');
 
   // Review submission modal
   const [isReviewModalOpen, setIsReviewModalOpen] = useState(false);
@@ -81,6 +88,13 @@ export const ProductDetailPage: React.FC = () => {
 
   // Bundle Add-on items
   const [includeCharger, setIncludeCharger] = useState(true);
+
+  // Pair with a different-category, in-stock related item (e.g. a laptop + an accessory).
+  useEffect(() => {
+    if (!product) return;
+    const candidate = related.find((r) => r.category !== product.category && r.stock > 0) || related.find((r) => r.stock > 0) || null;
+    setBundleProduct(candidate);
+  }, [related, product?.id]);
 
   useEffect(() => {
     // Background live update if API exists
@@ -99,6 +113,7 @@ export const ProductDetailPage: React.FC = () => {
           }
           if (data.related) setRelated(data.related);
           if (data.reviews) setReviews(data.reviews);
+          if (data.ratingSummary) setRatingSummary(data.ratingSummary);
         }
       })
       .catch(() => {})
@@ -136,14 +151,19 @@ export const ProductDetailPage: React.FC = () => {
     );
   }
 
-  const activePrice = selectedVariant ? selectedVariant.price : product.price;
+  // A live flash deal applies its discount to the base or variant price
+  // (the server applies the same rule at checkout).
+  const basePrice = selectedVariant ? selectedVariant.price : product.price;
+  const deal = product.flashDeal && new Date(product.flashDeal.endsAt).getTime() > Date.now() ? product.flashDeal : null;
+  const activePrice = deal
+    ? Math.max(0, Math.round(deal.discountType === 'percentage' ? basePrice * (1 - deal.discountValue / 100) : basePrice - deal.discountValue))
+    : basePrice;
+  const wasPrice = deal ? basePrice : product.compareAtPrice && product.compareAtPrice > basePrice ? product.compareAtPrice : null;
+  const specSections = Object.entries(product.specs || {}).filter(([, attrs]) => attrs && Object.keys(attrs).length > 0);
   const activeStock = selectedVariant ? selectedVariant.stock : product.stock;
   const activeSku = selectedVariant ? selectedVariant.sku : product.sku;
 
-  const discountPercent =
-    product.compareAtPrice && product.compareAtPrice > activePrice
-      ? Math.round(((product.compareAtPrice - activePrice) / product.compareAtPrice) * 100)
-      : 0;
+  const discountPercent = wasPrice && wasPrice > activePrice ? Math.round(((wasPrice - activePrice) / wasPrice) * 100) : 0;
 
   const isSaved = isInWishlist(product.id);
   const isCompared = isComparing(product.id);
@@ -167,77 +187,6 @@ export const ProductDetailPage: React.FC = () => {
     } else {
       navigator.clipboard.writeText(window.location.href);
       showToast('Product link copied to clipboard!', 'success');
-    }
-  };
-
-  const handleReviewSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newTitle.trim() || !newComment.trim()) {
-      showToast('Please provide both title and review comments', 'error');
-      return;
-    }
-
-    try {
-      const res = await fetch('/api/reviews', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          productId: product.id,
-          userName: newUserName.trim() || 'Verified Tech Buyer',
-          userCity: newUserCity,
-          rating: newRating,
-          title: newTitle.trim(),
-          comment: newComment.trim()
-        })
-      });
-      if (res.ok) {
-        const ct = res.headers.get('content-type');
-        if (ct && ct.includes('application/json')) {
-          const data = await res.json();
-          if (data.success && data.review) {
-            setReviews([data.review, ...reviews]);
-            showToast('Review submitted successfully!', 'success');
-            setIsReviewModalOpen(false);
-            setNewTitle('');
-            setNewComment('');
-            return;
-          }
-        }
-      }
-      // Local fallback
-      const localReview: Review = {
-        id: `rev-${Date.now()}`,
-        productId: product.id,
-        userName: newUserName.trim() || 'Verified Tech Buyer',
-        userCity: newUserCity,
-        rating: newRating,
-        title: newTitle.trim(),
-        comment: newComment.trim(),
-        verifiedPurchase: true,
-        date: new Date().toISOString()
-      };
-      setReviews([localReview, ...reviews]);
-      showToast('Review submitted successfully!', 'success');
-      setIsReviewModalOpen(false);
-      setNewTitle('');
-      setNewComment('');
-    } catch {
-      const localReview: Review = {
-        id: `rev-${Date.now()}`,
-        productId: product.id,
-        userName: newUserName.trim() || 'Verified Tech Buyer',
-        userCity: newUserCity,
-        rating: newRating,
-        title: newTitle.trim(),
-        comment: newComment.trim(),
-        verifiedPurchase: true,
-        date: new Date().toISOString()
-      };
-      setReviews([localReview, ...reviews]);
-      showToast('Review submitted successfully!', 'success');
-      setIsReviewModalOpen(false);
-      setNewTitle('');
-      setNewComment('');
     }
   };
 
@@ -354,30 +303,44 @@ export const ProductDetailPage: React.FC = () => {
 
                 <div className="flex items-center gap-1.5 text-xs text-emerald-400 font-bold">
                   <CheckCircle2 className="w-4 h-4" />
-                  <span>{activeStock > 0 ? `${activeStock} In Stock (Nairobi Kimathi Hub)` : 'Out of Stock'}</span>
+                  <span>{activeStock > 0 ? (activeStock <= 5 ? `Only ${activeStock} left in stock` : 'In stock') : 'Out of stock'}</span>
                 </div>
               </div>
 
               {/* Price Display */}
-              <div className="mt-5 p-4 rounded-2xl bg-slate-900 border border-slate-800 flex items-baseline justify-between">
-                <div>
-                  <div className="text-xs text-slate-400 font-medium mb-0.5">Special Retail Price:</div>
-                  <div className="text-3xl sm:text-4xl font-black text-white">
-                    {formatPrice(activePrice)}
+              {deal && (
+                <div className="mt-5 rounded-2xl border border-amber-600/40 bg-amber-950/30 p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <div className="eyebrow !text-amber-400 flex items-center gap-1.5"><Zap className="w-3.5 h-3.5" aria-hidden="true" />Flash deal</div>
+                    <div className="font-bold text-white">{deal.title}</div>
+                    {deal.remaining != null && <div className="text-xs text-amber-300">{deal.remaining} left at this price</div>}
                   </div>
-                  {product.compareAtPrice && (
+                  <DealCountdown endsAt={deal.endsAt} />
+                </div>
+              )}
+
+              <div className="mt-4 p-4 rounded-2xl bg-slate-900 border border-slate-800 flex flex-wrap items-end justify-between gap-3">
+                <div>
+                  <div className="text-xs text-slate-400 font-medium mb-0.5">{deal ? 'Deal price' : 'Price'}</div>
+                  <div className="text-3xl sm:text-4xl font-black text-white">{formatPrice(activePrice)}</div>
+                  {wasPrice && wasPrice > activePrice && (
                     <div className="text-xs text-slate-400 mt-1 flex items-center gap-2">
-                      <span className="line-through">{formatPrice(product.compareAtPrice)}</span>
-                      <span className="text-emerald-400 font-bold">Save {formatPrice(product.compareAtPrice - activePrice)}</span>
+                      <span className="line-through">{formatPrice(wasPrice)}</span>
+                      <span className="text-emerald-400 font-bold">Save {formatPrice(wasPrice - activePrice)}</span>
                     </div>
                   )}
                 </div>
-
                 <div className="text-right text-[11px] text-slate-400">
-                  <div className="font-semibold text-slate-300">16% Kenya VAT Included</div>
-                  <div>Official ETR Receipt Provided</div>
+                  <div className="font-semibold text-slate-300">{settings.taxRate}% VAT included</div>
+                  <div>Tax invoice with every order</div>
                 </div>
               </div>
+
+              {(product.reviewsCount ?? 0) > 0 && (
+                <button type="button" onClick={() => { setActiveTab('reviews'); document.getElementById('product-tabs')?.scrollIntoView({ behavior: 'smooth' }); }} className="mt-3 inline-flex items-center gap-2 text-sm text-slate-300 hover:underline">
+                  <StarDisplay value={Number(product.rating) || 0} /> {Number(product.rating).toFixed(1)} · {product.reviewsCount} review{product.reviewsCount === 1 ? '' : 's'}
+                </button>
+              )}
             </div>
 
             {/* Variants Picker (Storage / RAM / Colors) */}
@@ -518,218 +481,135 @@ export const ProductDetailPage: React.FC = () => {
           </div>
         </div>
 
-        {/* ======================================================== */}
-        {/* FREQUENTLY BOUGHT TOGETHER BUNDLE BUILDER */}
-        {/* ======================================================== */}
-        <div className="mt-16 p-6 sm:p-8 rounded-3xl bg-slate-900 border border-slate-800 space-y-6">
-          <div className="flex items-center gap-2 text-xs font-bold text-cyan-400 uppercase tracking-wider">
-            <Sparkles className="w-4 h-4 text-cyan-400" /> Recommended Hardware Bundle
-          </div>
-          <h3 className="text-xl sm:text-2xl font-extrabold text-white">
-            Frequently Bought Together
-          </h3>
-
-          <div className="flex flex-col md:flex-row items-center gap-6">
-            {/* Main Item */}
-            <div className="flex items-center gap-3 bg-slate-950 p-3 rounded-2xl border border-slate-800 flex-1 w-full">
-              <img src={product.thumbnail} alt="" className="w-16 h-16 rounded-xl object-contain bg-slate-900 p-1" />
-              <div>
-                <div className="text-xs font-bold text-white line-clamp-1">{product.name}</div>
-                <div className="text-emerald-400 font-extrabold text-xs">{formatPrice(activePrice)}</div>
+        {/* Frequently bought together — a real in-stock catalog item only */}
+        {bundleProduct && (
+          <section className="mt-16 card card-pad space-y-6" aria-labelledby="bundle-title">
+            <div className="eyebrow flex items-center gap-2"><Sparkles className="w-4 h-4" aria-hidden="true" />Pairs well with</div>
+            <h2 id="bundle-title" className="section-title">Frequently bought together</h2>
+            <div className="flex flex-col md:flex-row items-stretch md:items-center gap-4">
+              <div className="flex items-center gap-3 bg-slate-950 p-3 rounded-2xl border border-slate-800 flex-1 min-w-0">
+                <img src={product.thumbnail} alt="" className="w-16 h-16 rounded-xl object-contain bg-slate-900 p-1 shrink-0" />
+                <div className="min-w-0"><div className="text-sm font-bold text-white line-clamp-1">{product.name}</div><div className="text-emerald-400 font-extrabold text-sm">{formatPrice(activePrice)}</div></div>
+              </div>
+              <span className="text-slate-500 font-bold text-xl text-center" aria-hidden="true">+</span>
+              <label className="flex items-center gap-3 bg-slate-950 p-3 rounded-2xl border border-slate-800 flex-1 min-w-0 cursor-pointer">
+                <input type="checkbox" checked={includeBundle} onChange={(e) => setIncludeBundle(e.target.checked)} className="w-4 h-4 accent-[var(--t-accent-600)] shrink-0" />
+                <img src={bundleProduct.thumbnail} alt="" className="w-16 h-16 rounded-xl object-contain bg-slate-900 p-1 shrink-0" />
+                <div className="min-w-0"><div className="text-sm font-bold text-white line-clamp-1">{bundleProduct.name}</div><div className="text-emerald-400 font-extrabold text-sm">{formatPrice(bundleProduct.flashDeal?.dealPrice ?? bundleProduct.price)}</div></div>
+              </label>
+              <div className="p-4 rounded-2xl bg-cyan-950/60 border border-cyan-800/60 text-center md:w-64 space-y-2">
+                <div className="text-xs text-slate-300">Together</div>
+                <div className="text-xl font-black text-white">{formatPrice(activePrice + (includeBundle ? (bundleProduct.flashDeal?.dealPrice ?? bundleProduct.price) : 0))}</div>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    await addToCart(product, selectedVariant, 1);
+                    if (includeBundle) await addToCart(bundleProduct, null, 1);
+                    setIsCartDrawerOpen(true);
+                  }}
+                  disabled={activeStock <= 0}
+                  className="btn btn-primary w-full"
+                >
+                  {includeBundle ? 'Add both to cart' : 'Add to cart'}
+                </button>
               </div>
             </div>
-
-            <span className="text-slate-500 font-bold text-xl">+</span>
-
-            {/* Bundle Addon Item: Anker GaN Charger */}
-            <div className="flex items-center gap-3 bg-slate-950 p-3 rounded-2xl border border-slate-800 flex-1 w-full">
-              <input
-                type="checkbox"
-                checked={includeCharger}
-                onChange={(e) => setIncludeCharger(e.target.checked)}
-                className="rounded bg-slate-800 text-cyan-600 w-4 h-4 ml-1"
-              />
-              <img
-                src="https://images.unsplash.com/photo-1583863788434-e58a36330cf0?w=200&auto=format&fit=crop&q=80"
-                alt="Anker GaN Charger"
-                className="w-16 h-16 rounded-xl object-contain bg-slate-900 p-1"
-              />
-              <div>
-                <div className="text-xs font-bold text-white line-clamp-1">Anker Prime 100W GaN 3-Port Fast Wall Charger</div>
-                <div className="text-emerald-400 font-extrabold text-xs">{formatPrice(9800)}</div>
-              </div>
-            </div>
-
-            {/* Bundle Total & Action */}
-            <div className="p-4 rounded-2xl bg-cyan-950/60 border border-cyan-800/60 shrink-0 text-center w-full md:w-64 space-y-2">
-              <div className="text-xs text-slate-300 font-medium">Bundle Price:</div>
-              <div className="text-xl font-black text-white">
-                {formatPrice(activePrice + (includeCharger ? 9800 : 0))}
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  addToCart(product, selectedVariant, 1);
-                  if (includeCharger) {
-                    // Also add charger item
-                    const ankerProd = related.find(r => r.name.includes('Anker')) || {
-                      id: 'prod-anker-prime100w',
-                      name: 'Anker Prime 100W GaN 3-Port Fast Wall Charger',
-                      slug: 'anker-prime-100w-gan-charger',
-                      sku: 'ANK-PRIME-100W-BLK',
-                      price: 9800,
-                      stock: 40,
-                      thumbnail: 'https://images.unsplash.com/photo-1583863788434-e58a36330cf0?w=800&auto=format&fit=crop&q=80',
-                      images: [],
-                      category: 'Accessories',
-                      brand: 'Anker',
-                      condition: 'Brand New',
-                      warranty: '18 Months',
-                      rating: 5,
-                      reviewsCount: 78,
-                      shortSpecs: '100W Fast Charger',
-                      description: 'Anker 100W'
-                    };
-                    addToCart(ankerProd as any, null, 1);
-                  }
-                  setIsCartDrawerOpen(true);
-                }}
-                className="w-full py-2.5 bg-cyan-600 hover:bg-cyan-500 text-white font-bold text-xs rounded-xl transition-colors shadow"
-              >
-                Add Both to Cart
-              </button>
-            </div>
-          </div>
-        </div>
+          </section>
+        )}
 
         {/* ======================================================== */}
         {/* SPECIFICATIONS & REVIEWS TABS */}
         {/* ======================================================== */}
-        <div className="mt-16 space-y-6">
-          {/* Tab Navigation */}
-          <div className="flex items-center gap-2 border-b border-slate-800 pb-3 overflow-x-auto">
+        <section id="product-tabs" className="mt-16 space-y-6 scroll-mt-24" aria-label="Product information">
+          <div className="flex items-center gap-2 border-b border-slate-800 pb-3 overflow-x-auto scrollbar-none" role="tablist">
             {[
-              { id: 'specs', label: 'Technical Specifications' },
-              { id: 'description', label: 'Overview & Highlights' },
-              { id: 'reviews', label: `Customer Reviews (${reviews.length})` },
-              { id: 'warranty', label: 'Warranty & Genuine Seal' }
+              { id: 'description', label: 'Overview' },
+              { id: 'specs', label: 'Specifications' },
+              { id: 'reviews', label: `Reviews (${ratingSummary?.count ?? reviews.length})` },
+              { id: 'warranty', label: 'Warranty & returns' }
             ].map((tab) => (
               <button
                 key={tab.id}
                 type="button"
+                role="tab"
+                aria-selected={activeTab === tab.id}
                 onClick={() => setActiveTab(tab.id as any)}
-                className={`px-5 py-2.5 rounded-xl text-xs font-bold transition-all shrink-0 ${
-                  activeTab === tab.id
-                    ? 'bg-cyan-600 text-white shadow-lg shadow-cyan-600/30'
-                    : 'text-slate-400 hover:text-white hover:bg-slate-900'
-                }`}
+                className={`px-5 py-2.5 rounded-xl text-sm font-bold transition-colors shrink-0 ${activeTab === tab.id ? 'bg-cyan-600 text-white' : 'text-slate-400 hover:text-slate-100 hover:bg-slate-900'}`}
               >
                 {tab.label}
               </button>
             ))}
           </div>
 
-          {/* Tab 1: Structured Specs Table */}
+          {activeTab === 'description' && (
+            <div className="card card-pad space-y-5 animate-fadeInUp" role="tabpanel">
+              <h2 className="text-xl font-bold text-white">About this product</h2>
+              {product.description ? (
+                <div className="space-y-3 text-sm sm:text-base text-slate-300 leading-relaxed max-w-3xl">
+                  {product.description.split(/\n{2,}/).map((para, i) => <p key={i} className="whitespace-pre-line">{para}</p>)}
+                </div>
+              ) : (
+                <p className="text-sm text-slate-400">A detailed description is coming soon. See the Specifications tab, or ask us on WhatsApp.</p>
+              )}
+              {product.shortSpecs && (
+                <div>
+                  <h3 className="eyebrow mb-2">Key features</h3>
+                  <ul className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {product.shortSpecs.split('|').map((f) => f.trim()).filter(Boolean).map((f) => (
+                      <li key={f} className="flex items-start gap-2 text-sm text-slate-200"><Check className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" aria-hidden="true" />{f}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              <dl className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
+                {[['Brand', product.brand], ['Condition', product.condition], ['Warranty', product.warranty], ['SKU', activeSku]].filter(([, v]) => v).map(([k, v]) => (
+                  <div key={k} className="rounded-xl border border-slate-800 bg-slate-950/60 p-3 min-w-0"><dt className="text-xs text-slate-500">{k}</dt><dd className="font-semibold text-white break-words">{v}</dd></div>
+                ))}
+              </dl>
+            </div>
+          )}
+
           {activeTab === 'specs' && (
-            <div className="p-6 sm:p-8 rounded-3xl bg-slate-900 border border-slate-800 space-y-6 animate-in fade-in duration-200">
-              <h3 className="text-xl font-bold text-white">Full Hardware Specifications</h3>
-              
-              {product.specs ? (
-                <div className="space-y-6">
-                  {Object.entries(product.specs).map(([sectionTitle, sectionAttrs]) => (
-                    <div key={sectionTitle} className="space-y-3">
-                      <h4 className="text-xs font-extrabold text-cyan-400 uppercase tracking-wider pb-1 border-b border-slate-800">
-                        {sectionTitle}
-                      </h4>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
-                        {Object.entries(sectionAttrs).map(([k, v]) => (
-                          <div key={k} className="flex justify-between p-3 rounded-xl bg-slate-950/60 border border-slate-800/80">
-                            <span className="text-slate-400 font-medium">{k}</span>
-                            <span className="text-white font-semibold text-right">{v}</span>
+            <div className="card card-pad space-y-6 animate-fadeInUp" role="tabpanel">
+              <h2 className="text-xl font-bold text-white">Specifications</h2>
+              {specSections.length ? (
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  {specSections.map(([section, attrs]) => (
+                    <div key={section} className="rounded-2xl border border-slate-800 overflow-hidden">
+                      <h3 className="px-4 py-2.5 bg-slate-950 text-xs font-extrabold text-cyan-400 uppercase tracking-wider">{section}</h3>
+                      <dl className="divide-y divide-slate-800">
+                        {Object.entries(attrs).map(([k, v]) => (
+                          <div key={k} className="grid grid-cols-5 gap-3 px-4 py-2.5 text-sm">
+                            <dt className="col-span-2 text-slate-400">{k}</dt>
+                            <dd className="col-span-3 text-white font-medium break-words">{v}</dd>
                           </div>
                         ))}
-                      </div>
+                      </dl>
                     </div>
                   ))}
                 </div>
               ) : (
-                <div className="text-xs text-slate-300 leading-relaxed">
-                  <p>{product.shortSpecs}</p>
-                </div>
+                <p className="text-sm text-slate-400">{product.shortSpecs || 'Detailed specifications have not been published for this item yet.'}</p>
               )}
+              <p className="text-xs text-slate-500">Specifications are from the manufacturer or our product listing. If a detail matters for your purchase, confirm with our team before ordering.</p>
             </div>
           )}
 
-          {/* Tab 2: Overview */}
-          {activeTab === 'description' && (
-            <div className="p-6 sm:p-8 rounded-3xl bg-slate-900 border border-slate-800 space-y-4 text-xs sm:text-sm text-slate-300 leading-relaxed animate-in fade-in duration-200">
-              <h3 className="text-xl font-bold text-white">Product Overview</h3>
-              <p>{product.description}</p>
-              <p>
-                Every item sold by {settings.storeName} is verified authentic and covered by our warranty terms — see the Warranty tab for details specific to this item's condition.
-              </p>
-            </div>
-          )}
-
-          {/* Tab 3: Customer Reviews */}
           {activeTab === 'reviews' && (
-            <div className="p-6 sm:p-8 rounded-3xl bg-slate-900 border border-slate-800 space-y-6 animate-in fade-in duration-200">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                <div>
-                  <h3 className="text-xl font-bold text-white">Customer Reviews</h3>
-                  <p className="text-xs text-slate-400">Verified buyer ratings from Kenyan customers</p>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => setIsReviewModalOpen(true)}
-                  className="px-5 py-2.5 bg-cyan-600 hover:bg-cyan-500 text-white font-bold text-xs rounded-xl shadow-lg transition-colors"
-                >
-                  Write a Customer Review
-                </button>
-              </div>
-
-              {reviews.length === 0 ? (
-                <div className="text-center py-10 text-xs text-slate-400">
-                  Be the first to review {product.name}!
-                </div>
-              ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {reviews.map((rev) => (
-                    <div key={rev.id} className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-2">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center text-amber-400 gap-0.5">
-                          {[...Array(rev.rating)].map((_, i) => (
-                            <Star key={i} className="w-3.5 h-3.5 fill-amber-400" />
-                          ))}
-                        </div>
-                        <span className="text-[11px] text-slate-500 font-mono">{rev.date}</span>
-                      </div>
-                      <h4 className="text-xs font-bold text-white">"{rev.title}"</h4>
-                      <p className="text-xs text-slate-300 leading-relaxed italic">{rev.comment}</p>
-                      <div className="pt-2 flex items-center justify-between text-[11px] text-slate-400">
-                        <span className="font-semibold text-white">{rev.userName} ({rev.userCity})</span>
-                        <span className="text-emerald-400 font-bold flex items-center gap-1">
-                          <CheckCircle2 className="w-3 h-3" /> Verified Buyer
-                        </span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
+            <div className="card card-pad animate-fadeInUp" role="tabpanel">
+              <h2 className="text-xl font-bold text-white mb-4">Customer reviews</h2>
+              <ProductReviews productId={product.id} productName={product.name} initialReviews={reviews} initialSummary={ratingSummary} />
             </div>
           )}
 
-          {/* Tab 4: Warranty */}
           {activeTab === 'warranty' && (
-            <div className="p-6 sm:p-8 rounded-3xl bg-slate-900 border border-slate-800 space-y-4 text-xs text-slate-300 leading-relaxed animate-in fade-in duration-200">
-              <h3 className="text-xl font-bold text-white">Warranty & Genuine Authenticity Guarantee</h3>
-              <p>
-                This unit is covered by <strong className="text-white">{product.warranty}</strong>. If your device develops any manufacturer hardware defect, you can return it to our Kimathi Street Flagship Store or Sarit Centre TechHub for warranty service.
-              </p>
+            <div className="card card-pad space-y-3 text-sm text-slate-300 leading-relaxed animate-fadeInUp" role="tabpanel">
+              <h2 className="text-xl font-bold text-white">Warranty & returns</h2>
+              <p>This item is covered by <strong className="text-white">{product.warranty || 'our standard warranty'}</strong>. For warranty service bring the item and your receipt to {settings.address}, or call {settings.phone}.</p>
+              <p>Unused items in original packaging can be returned within 7 days — see our <a href="/policies/returns" className="text-cyan-400 underline">returns policy</a> and <a href="/policies/warranty" className="text-cyan-400 underline">warranty policy</a>.</p>
             </div>
           )}
-        </div>
+        </section>
 
         {/* ======================================================== */}
         {/* RELATED PRODUCTS */}
@@ -747,100 +627,6 @@ export const ProductDetailPage: React.FC = () => {
           </div>
         )}
       </div>
-
-      {/* Review Submission Modal */}
-      {isReviewModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="bg-slate-900 border border-slate-700 rounded-3xl max-w-lg w-full p-6 sm:p-8 space-y-5 shadow-2xl relative">
-            <div className="flex items-center justify-between">
-              <h3 className="text-lg font-bold text-white">Review {product.name}</h3>
-              <button
-                type="button"
-                onClick={() => setIsReviewModalOpen(false)}
-                className="p-1.5 rounded-lg text-slate-400 hover:text-white"
-              >
-                ✕
-              </button>
-            </div>
-
-            <form onSubmit={handleReviewSubmit} className="space-y-4 text-xs">
-              <div>
-                <label className="block text-slate-300 font-bold mb-1">Your Rating:</label>
-                <div className="flex gap-2">
-                  {[1, 2, 3, 4, 5].map((star) => (
-                    <button
-                      key={star}
-                      type="button"
-                      onClick={() => setNewRating(star)}
-                      className={`p-2 rounded-xl border ${
-                        newRating >= star ? 'bg-amber-950 border-amber-500 text-amber-400' : 'bg-slate-800 border-slate-700 text-slate-500'
-                      }`}
-                    >
-                      <Star className={`w-5 h-5 ${newRating >= star ? 'fill-amber-400' : ''}`} />
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-slate-300 font-bold mb-1">Your Name:</label>
-                  <input
-                    type="text"
-                    value={newUserName}
-                    onChange={(e) => setNewUserName(e.target.value)}
-                    placeholder="e.g. Brian Otieno"
-                    className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-white"
-                    required
-                  />
-                </div>
-                <div>
-                  <label className="block text-slate-300 font-bold mb-1">Town / County:</label>
-                  <input
-                    type="text"
-                    value={newUserCity}
-                    onChange={(e) => setNewUserCity(e.target.value)}
-                    placeholder="e.g. Nairobi (Westlands)"
-                    className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-white"
-                    required
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-slate-300 font-bold mb-1">Review Headline:</label>
-                <input
-                  type="text"
-                  value={newTitle}
-                  onChange={(e) => setNewTitle(e.target.value)}
-                  placeholder="e.g. Incredible battery life and blazing fast performance!"
-                  className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-white"
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="block text-slate-300 font-bold mb-1">Your Detailed Experience:</label>
-                <textarea
-                  rows={4}
-                  value={newComment}
-                  onChange={(e) => setNewComment(e.target.value)}
-                  placeholder="Describe speed, camera quality, build finish, and delivery speed..."
-                  className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-white resize-none"
-                  required
-                />
-              </div>
-
-              <button
-                type="submit"
-                className="w-full py-3 bg-cyan-600 hover:bg-cyan-500 text-white font-bold rounded-xl text-xs transition-colors shadow-lg shadow-cyan-600/30"
-              >
-                Publish Verified Review
-              </button>
-            </form>
-          </div>
-        </div>
-      )}
 
       <Footer />
       <FloatingWhatsApp productContext={product.name} />

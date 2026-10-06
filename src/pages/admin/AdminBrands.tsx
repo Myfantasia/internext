@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { Plus, Award, Save, X } from 'lucide-react';
+import { Plus, Award, Save } from 'lucide-react';
+import { Modal, Field } from './adminUi';
 import { useStore } from '../../context/StoreContext';
 import { useToast } from '../../context/ToastContext';
 import { ImageUploadField } from '../../components/admin/ImageUploadField';
@@ -81,38 +82,22 @@ export const AdminBrands: React.FC = () => {
       </div>
 
       {isModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md">
-          <form onSubmit={handleCreate} className="bg-slate-900 border border-slate-700 rounded-3xl max-w-lg w-full p-6 space-y-4">
-            <div className="flex items-center justify-between pb-2 border-b border-slate-800">
-              <h3 className="text-lg font-bold text-white">New Brand</h3>
-              <button type="button" onClick={() => setIsModalOpen(false)} className="text-slate-400 hover:text-white">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            <label className="block text-xs">
-              <span className="block text-slate-300 font-bold mb-1">Brand name</span>
-              <input
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-white"
-                required
-              />
-            </label>
+        <Modal
+          title="New brand"
+          size="medium"
+          onClose={() => setIsModalOpen(false)}
+          footer={<>
+            <button type="button" onClick={() => setIsModalOpen(false)} className="btn btn-secondary">Cancel</button>
+            <button type="submit" form="brand-form" disabled={saving} className="btn btn-primary"><Save className="w-4 h-4" />{saving ? 'Saving…' : 'Save brand'}</button>
+          </>}
+        >
+          <form id="brand-form" onSubmit={handleCreate} className="space-y-4">
+            <Field label="Brand name" htmlFor="brand-name" required>
+              <input id="brand-name" value={name} onChange={(e) => setName(e.target.value)} className="field-input" required />
+            </Field>
             <ImageUploadField value={logoUrl} onChange={setLogoUrl} label="Logo (optional)" />
-            <div className="flex justify-end gap-2 pt-2">
-              <button type="button" onClick={() => setIsModalOpen(false)} className="px-4 py-2 bg-slate-800 rounded-xl text-xs font-bold">
-                Cancel
-              </button>
-              <button
-                type="submit"
-                disabled={saving}
-                className="px-5 py-2 bg-cyan-600 hover:bg-cyan-500 rounded-xl text-xs font-bold text-white flex items-center gap-2"
-              >
-                <Save className="w-4 h-4" /> Save
-              </button>
-            </div>
           </form>
-        </div>
+        </Modal>
       )}
     </div>
   );

@@ -1,5 +1,7 @@
+import crypto from 'crypto';
 import 'dotenv/config';
 import express from 'express';
+import './middleware/asyncErrors.js';
 import cors from 'cors';
 import fs from 'fs';
 import path from 'path';
@@ -7,6 +9,8 @@ import { fileURLToPath } from 'url';
 import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
 import { attachUser } from './middleware/session.js';
+import { errorHandler } from './middleware/asyncErrors.js';
+import { corsOptions, csrfOriginCheck } from './middleware/security.js';
 import { db } from './db/client.js';
 import { products, orders } from './db/schema.js';
 import { sql } from 'drizzle-orm';
@@ -26,6 +30,13 @@ import adminRoutes from './routes/adminRoutes.js';
 import invoiceRoutes from './routes/invoiceRoutes.js';
 import receiptRoutes from './routes/receiptRoutes.js';
 import uploadRoutes from './routes/uploadRoutes.js';
+import paymentRoutes, { stripeWebhookHandler } from './routes/paymentRoutes.js';
+import deliveryRoutes from './routes/deliveryRoutes.js';
+import flashDealRoutes from './routes/flashDealRoutes.js';
+import newsRoutes from './routes/newsRoutes.js';
+import { expireStaleUnpaidOrders } from './repositories/ordersRepo.js';
+import { expireStaleBankTransferOrders } from './services/payments/offline.js';
+import { importAllSources } from './repositories/newsRepo.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -36,13 +47,14 @@ const PORT = process.env.PORT || 4000;
 app.use(helmet({
   contentSecurityPolicy: false // frontend is a separate Vite build; CSP tuned when the two are unified for production
 }));
-app.use(cors({
-  origin: process.env.APP_URL || true,
-  credentials: true
-}));
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true }));
+app.set('trust proxy', process.env.TRUST_PROXY === 'true' || !!process.env.VERCEL ? 1 : false);
+app.use(cors(corsOptions()));
+// Stripe signs the exact raw bytes, so this route must see the body before express.json parses it.
+app.post('/api/payments/stripe/webhook', express.raw({ type: 'application/json', limit: '1mb' }), stripeWebhookHandler);
+app.use(express.json({ limit: '1mb' }));
+app.use(express.urlencoded({ extended: false, limit: '100kb' }));
 app.use(cookieParser());
+app.use(csrfOriginCheck);
 app.use(attachUser);
 
 // Request logging middleware
@@ -67,11 +79,16 @@ app.use('/api/tickets', ticketRoutes);
 app.use('/api/blog', blogRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/uploads', uploadRoutes);
+app.use('/api/payments', paymentRoutes);
+app.use('/api/delivery', deliveryRoutes);
+app.use('/api/flash-deals', flashDealRoutes);
+app.use('/api/news', newsRoutes);
 app.use('/api', invoiceRoutes);
 app.use('/api', receiptRoutes);
 
 const uploadsPath = path.join(__dirname, '../uploads');
-fs.mkdirSync(uploadsPath, { recursive: true });
+// Local uploads only; on Vercel the disk is read-only and images go to Vercel Blob.
+try { fs.mkdirSync(uploadsPath, { recursive: true }); } catch { /* read-only filesystem */ }
 app.use('/uploads', express.static(uploadsPath));
 
 // Health check endpoint
@@ -120,6 +137,28 @@ app.get('/favicon.svg', (req, res) => {
   });
 });
 
+// Housekeeping, shared by the long-running server (timers below) and Vercel
+// Cron, which calls GET /api/cron/housekeeping (see vercel.json). Vercel sends
+// "Authorization: Bearer $CRON_SECRET"; anything else is refused.
+async function runHousekeeping() {
+  const [unpaid, bank] = await Promise.all([expireStaleUnpaidOrders(), expireStaleBankTransferOrders()]);
+  return { expiredUnpaidOrders: unpaid, expiredBankTransferOrders: bank };
+}
+
+app.get('/api/cron/housekeeping', async (req, res) => {
+  const secret = process.env.CRON_SECRET || '';
+  const provided = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+  const ok = secret.length >= 16 && provided.length === secret.length
+    && crypto.timingSafeEqual(Buffer.from(provided), Buffer.from(secret));
+  if (!ok) return res.status(401).json({ success: false });
+  try {
+    res.json({ success: true, ...(await runHousekeeping()) });
+  } catch (err) {
+    console.error('[cron] housekeeping failed:', err);
+    res.status(500).json({ success: false });
+  }
+});
+
 // Fallback handler for SPA client-side routing
 app.use((req, res) => {
   if (req.path.startsWith('/api')) {
@@ -143,7 +182,20 @@ app.use((req, res) => {
   });
 });
 
+app.use(errorHandler);
+
+// Background housekeeping for long-running servers (Vercel uses the cron route above).
+function startBackgroundJobs() {
+  const every = (minutes, job, label) => setInterval(() => {
+    job().catch((e) => console.error(`[jobs] ${label} failed:`, e.message));
+  }, minutes * 60 * 1000).unref();
+  every(15, () => runHousekeeping(), 'expire unpaid orders');
+  const newsMinutes = Number(process.env.NEWS_FETCH_INTERVAL_MINUTES || 0);
+  if (newsMinutes >= 15) every(newsMinutes, () => importAllSources(), 'news feed import');
+}
+
 if (!process.env.VERCEL) {
+  startBackgroundJobs();
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`\n======================================================`);
     console.log(`Internext Business System API Server is Live on Port ${PORT}`);

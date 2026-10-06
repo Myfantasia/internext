@@ -29,7 +29,12 @@ const ADMIN_PERMISSIONS = [
   'tickets:read', 'tickets:respond',
   'customers:read',
   'blog:write',
-  'newsletter:read'
+  'newsletter:read',
+  'payments:read', 'payments:refund',
+  'flash_deals:read', 'flash_deals:write',
+  'delivery:read', 'delivery:write',
+  'referrals:read', 'referrals:write',
+  'news:read', 'news:write'
 ];
 
 const SALES_MANAGER_PERMISSIONS = [
@@ -45,6 +50,10 @@ const SALES_MANAGER_PERMISSIONS = [
   'reviews:read',
   'tickets:read', 'tickets:respond',
   'customers:read',
+  'payments:read',
+  'flash_deals:read',
+  'delivery:read',
+  'news:read', 'news:write',
   'orders:read_own', 'invoices:read_own', 'receipts:read_own',
   'cart:manage_own', 'profile:read_own', 'profile:update_own'
 ];
@@ -54,7 +63,8 @@ const CUSTOMER_PERMISSIONS = [
   'orders:create', 'orders:read_own',
   'invoices:read_own', 'receipts:read_own',
   'tickets:create', 'tickets:read_own',
-  'reviews:read', 'reviews:create',
+  'reviews:read', 'reviews:create', 'reviews:update_own',
+  'referrals:use',
   'cart:manage_own', 'profile:read_own', 'profile:update_own'
 ];
 

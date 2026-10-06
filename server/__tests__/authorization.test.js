@@ -6,6 +6,7 @@ process.env.VERCEL = '1';
 
 const { default: request } = await import('supertest');
 const { default: app } = await import('../index.js');
+const { extractCookie: cookieFrom, TEST_LOCATION, uniqueKenyanPhone } = await import('./helpers.js');
 
 const suffix = Date.now();
 const admin = { email: `test-admin-${suffix}@internextbusinesssystem.co.ke`, password: 'AdminPass123', name: 'Test Admin' };
@@ -14,21 +15,33 @@ const customer = { email: `test-customer-${suffix}@example.com`, password: 'Stro
 let adminCookie;
 let customerCookie;
 
-function extractCookie(res) {
-  const raw = res.headers['set-cookie'];
-  return Array.isArray(raw) ? raw.map((c) => c.split(';')[0]).join('; ') : undefined;
-}
+const extractCookie = cookieFrom;
 
 describe('Authentication', () => {
   it('registers a customer and never allows a client-supplied role to take effect', async () => {
     const res = await request(app)
       .post('/api/auth/register')
-      .send({ ...customer, role: 'ADMIN' }); // attempted privilege escalation via extra field
+      .send({ ...customer, phone: uniqueKenyanPhone(), location: TEST_LOCATION, role: 'ADMIN' }); // attempted privilege escalation via extra field
 
     expect(res.status).toBe(201);
     expect(res.body.user.role).toBe('CUSTOMER');
     expect(res.body.user.passwordHash).toBeUndefined();
-    customerCookie = extractCookie(res);
+  });
+
+  it('does not sign the user in on registration — a separate login is required', async () => {
+    const res = await request(app)
+      .post('/api/auth/register')
+      .send({ name: 'No Auto Login', email: `noauto-${suffix}@example.com`, password: 'StrongPass1', phone: uniqueKenyanPhone(), location: TEST_LOCATION });
+    expect(res.status).toBe(201);
+    expect(res.body.requiresLogin).toBe(true);
+    expect(res.headers['set-cookie']).toBeUndefined();
+  });
+
+  it('requires a valid county and Kenyan phone at registration', async () => {
+    const res = await request(app)
+      .post('/api/auth/register')
+      .send({ name: 'Bad Location', email: `badloc-${suffix}@example.com`, password: 'StrongPass1', phone: '123', location: { county: 'Atlantis', town: 'X' } });
+    expect(res.status).toBe(400);
   });
 
   it('rejects weak passwords server-side', async () => {
@@ -45,6 +58,59 @@ describe('Authentication', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.user.role).toBe('CUSTOMER');
+    customerCookie = extractCookie(res);
+  });
+
+  it('refuses a customer account on the staff portal without opening a session', async () => {
+    const res = await request(app).post('/api/auth/login').send({ email: customer.email, password: customer.password, portal: 'staff' });
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('USE_STORE_SIGNIN');
+    expect(res.headers['set-cookie']).toBeUndefined();
+  });
+
+  it('rejects a second account with an already-registered phone number', async () => {
+    const phone = uniqueKenyanPhone();
+    const first = await request(app).post('/api/auth/register')
+      .send({ name: 'Phone One', email: `phone1-${suffix}@example.com`, password: 'StrongPass1', phone, location: TEST_LOCATION });
+    expect(first.status).toBe(201);
+    // Same number written differently still clashes (stored normalized).
+    const second = await request(app).post('/api/auth/register')
+      .send({ name: 'Phone Two', email: `phone2-${suffix}@example.com`, password: 'StrongPass1', phone: `+254 ${phone.slice(1)}`, location: TEST_LOCATION });
+    expect(second.status).toBe(409);
+    expect(second.body.code).toBe('PHONE_TAKEN');
+  });
+
+  it('issues a session that expires in 3 hours (server-side and cookie)', async () => {
+    const res = await request(app).post('/api/auth/login').send({ email: customer.email, password: customer.password });
+    const ttlMs = new Date(res.body.sessionExpiresAt).getTime() - Date.now();
+    expect(ttlMs).toBeGreaterThan(2.9 * 3600 * 1000);
+    expect(ttlMs).toBeLessThanOrEqual(3 * 3600 * 1000 + 5000);
+    const cookie = res.headers['set-cookie'].find((c) => c.includes('Max-Age='));
+    expect(Number(cookie.match(/Max-Age=(\d+)/)[1])).toBe(3 * 3600);
+  });
+
+  it('rejects a session whose server-side row has expired, with SESSION_EXPIRED', async () => {
+    const login = await request(app).post('/api/auth/login').send({ email: customer.email, password: customer.password });
+    const cookie = extractCookie(login);
+    const { db } = await import('../db/client.js');
+    const { sessions } = await import('../db/schema.js');
+    const { eq } = await import('drizzle-orm');
+    const { verifySessionToken } = await import('../auth/tokens.js');
+    const { sessionId } = await verifySessionToken(cookie.split('=').slice(1).join('='));
+    await db.update(sessions).set({ expiresAt: new Date(Date.now() - 1000) }).where(eq(sessions.id, sessionId));
+
+    const res = await request(app).get('/api/cart').set('Cookie', cookie);
+    expect(res.status).toBe(401);
+    expect(res.body.code).toBe('SESSION_EXPIRED');
+    expect(res.headers['x-session-expired']).toBe('1');
+  });
+
+  it('logout invalidates the session server-side', async () => {
+    const login = await request(app).post('/api/auth/login').send({ email: customer.email, password: customer.password });
+    const cookie = extractCookie(login);
+    await request(app).post('/api/auth/logout').set('Cookie', cookie);
+    const res = await request(app).get('/api/cart').set('Cookie', cookie);
+    expect(res.status).toBe(401);
   });
 
   it('rejects invalid credentials with a generic message (no user enumeration)', async () => {
@@ -67,8 +133,15 @@ describe('RBAC — backend enforcement (not just UI hiding)', () => {
       const passwordHash = await hashPassword(admin.password);
       await createUser({ name: admin.name, email: admin.email, passwordHash, role: 'ADMIN' });
     }
-    const res = await request(app).post('/api/auth/login').send({ email: admin.email, password: admin.password });
+    const res = await request(app).post('/api/auth/login').send({ email: admin.email, password: admin.password, portal: 'staff' });
     adminCookie = extractCookie(res);
+  });
+
+  it('refuses staff accounts on the customer sign-in', async () => {
+    const res = await request(app).post('/api/auth/login').send({ email: admin.email, password: admin.password });
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('USE_STAFF_PORTAL');
+    expect(res.headers['set-cookie']).toBeUndefined();
   });
 
   it('blocks unauthenticated access to admin endpoints', async () => {
@@ -126,9 +199,39 @@ describe('IDOR protections', () => {
   it('redacts customer PII on the public order-tracking endpoint for non-owners', async () => {
     const res = await request(app).get('/api/orders/ORD-2026-000101');
     if (res.status === 200) {
-      expect(res.body.order.customer.email).toBeUndefined();
-      expect(res.body.order.customer.phone).toBeUndefined();
+      expect(res.body.order.customer).toBeUndefined();
+      expect(res.body.order.total).toBeUndefined();
     }
+  });
+
+  it('removed the old endpoint that let any signed-in user mark an order as paid', async () => {
+    const res = await request(app).post('/api/orders/ORD-2026-000101/mpesa-verify').set('Cookie', customerCookie).send({});
+    expect(res.status).toBe(404);
+  });
+
+  it('does not let a customer start payment for an order that is not theirs', async () => {
+    const res = await request(app).post('/api/payments/orders/00000000-0000-4000-8000-000000000000/start').set('Cookie', customerCookie).send({ provider: 'mpesa', phone: '0712345678' });
+    expect(res.status).toBe(404);
+  });
+
+  it('rejects M-Pesa callbacks without the secret path token', async () => {
+    const res = await request(app).post('/api/payments/mpesa/callback/wrong-secret').send({ Body: { stkCallback: { CheckoutRequestID: 'x', ResultCode: 0 } } });
+    expect(res.status).toBe(404);
+  });
+
+  it('rejects Stripe webhooks with an invalid signature', async () => {
+    const res = await request(app).post('/api/payments/stripe/webhook').set('Content-Type', 'application/json').set('Stripe-Signature', 't=1,v1=bad').send('{}');
+    expect([400, 500]).toContain(res.status);
+  });
+
+  it('rejects cross-site state-changing requests (CSRF origin check)', async () => {
+    const res = await request(app).post('/api/auth/logout').set('Origin', 'https://evil.example');
+    expect(res.status).toBe(403);
+  });
+
+  it('does not crash the API on a blog slug lookup that misses', async () => {
+    const res = await request(app).get('/api/blog/definitely-not-a-real-post');
+    expect(res.status).toBe(404);
   });
 
   it('blocks unauthenticated access to the full support ticket list', async () => {

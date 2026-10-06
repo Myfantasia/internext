@@ -10,8 +10,9 @@
 
 import 'dotenv/config';
 import { db, rawSql } from './client.js';
-import { categories, brands, products, companyProfile, deliveryZones, stores, coupons } from './schema.js';
+import { categories, brands, products, companyProfile, deliveryZones, deliveryRateBands, stores, coupons } from './schema.js';
 import { sql } from 'drizzle-orm';
+import { PRODUCT_DETAILS } from '../data/productDetails.js';
 
 const CATEGORIES = [
   { slug: 'brand-new-laptops', name: 'Brand New Laptops', kind: 'product', sortOrder: 1,
@@ -118,6 +119,38 @@ const PRODUCTS = [
   ['Canon Ink Cartridge Set', 'canon', 'office-supplies', 'CAN-INK-SET', 3200, null, 45, 'Brand New Sealed', '—', 'Black + Tri-Color Set', 'Genuine-compatible ink cartridge set for Canon inkjet printers.', IMG.printer, false]
 ];
 
+// Structured specs are derived ONLY from each product's own listing line
+// (shortSpecs) plus its condition/warranty — nothing is added that the shop
+// hasn't stated. Admins can enrich specs from manufacturer datasheets in the
+// product editor.
+function specsFromListing(categorySlug, shortSpecs, { condition, warranty, brandName }) {
+  const parts = String(shortSpecs || '').split('|').map((p) => p.trim()).filter(Boolean);
+  const general = {};
+  if (brandName && brandName !== 'Internext Business System') general.Brand = brandName;
+  if (condition) general.Condition = condition;
+  if (warranty && warranty !== '—') general.Warranty = warranty;
+
+  const isComputer = ['brand-new-laptops', 'ex-uk-laptops', 'desktop-computers'].includes(categorySlug);
+  if (!isComputer) {
+    return Object.keys(general).length || parts.length
+      ? { General: general, ...(parts.length ? { 'Key Features': Object.fromEntries(parts.map((p, i) => [`Feature ${i + 1}`, p])) } : {}) }
+      : {};
+  }
+
+  const perf = {};
+  const display = {};
+  const other = {};
+  for (const part of parts) {
+    if (/\b(intel|amd|core|ryzen|celeron|pentium)\b/i.test(part)) perf.Processor = part;
+    else if (/\bRAM\b/i.test(part)) perf.Memory = part.replace(/\s*RAM\b/i, '').trim();
+    else if (/\b(SSD|HDD|NVMe|eMMC)\b/i.test(part)) perf.Storage = part;
+    else if (/["”]|\binch\b/i.test(part)) display.Screen = part;
+    else if (/form factor|tower/i.test(part)) other['Form Factor'] = part;
+    else other[`Feature ${Object.keys(other).length + 1}`] = part;
+  }
+  return Object.fromEntries(Object.entries({ General: general, Performance: perf, Display: display, Other: other }).filter(([, v]) => Object.keys(v).length));
+}
+
 async function run() {
   console.log('Seeding company profile…');
   const existingProfile = await db.select().from(companyProfile).limit(1);
@@ -148,14 +181,28 @@ async function run() {
     await db.insert(companyProfile).values(profileData);
   }
 
-  console.log('Seeding delivery zones…');
-  await db.delete(deliveryZones);
-  await db.insert(deliveryZones).values([
-    { name: 'Nairobi CBD & Environs', fee: '350', estimatedTime: '2-4 Hours', freeThreshold: '50000' },
-    { name: 'Greater Nairobi (Suburbs)', fee: '500', estimatedTime: 'Same Day / Next Morning', freeThreshold: '60000' },
-    { name: 'Upcountry (Courier)', fee: '650', estimatedTime: '24-48 Hours', freeThreshold: '80000' },
-    { name: 'Free Pickup — Princely House, Moi Avenue', fee: '0', estimatedTime: 'Ready in 30 Mins', freeThreshold: '0' }
-  ]);
+  console.log('Seeding delivery options…');
+  // Store pickup is a fixed option; everything else is priced by distance
+  // bands below. Existing options are left alone so admin edits survive re-seeding.
+  const existingOptions = await db.select().from(deliveryZones);
+  if (!existingOptions.some((z) => z.kind === 'pickup')) {
+    await db.insert(deliveryZones).values({
+      name: 'Free Pickup — Princely House, Moi Avenue', kind: 'pickup', fee: '0', estimatedTime: 'Ready in 30 mins',
+      description: 'Collect from our office on Moi Avenue, Nairobi CBD. Bring your order number.', sortOrder: 0
+    });
+  }
+
+  console.log('Seeding delivery distance bands (starting values — adjust under Admin → Delivery Pricing)…');
+  const existingBands = await db.select().from(deliveryRateBands);
+  if (!existingBands.length) {
+    await db.insert(deliveryRateBands).values([
+      { name: 'Within 5 km', description: 'Nairobi CBD and immediate surroundings.', minKm: '0', maxKm: '5', fee: '300', freeThreshold: '50000', estimatedTime: '2-4 hours', sortOrder: 1 },
+      { name: '5 - 15 km', description: 'Most Nairobi suburbs.', minKm: '5', maxKm: '15', fee: '500', freeThreshold: '60000', estimatedTime: 'Same day', sortOrder: 2 },
+      { name: '15 - 40 km', description: 'Greater Nairobi and nearby towns.', minKm: '15', maxKm: '40', fee: '900', freeThreshold: '80000', estimatedTime: 'Same day / next morning', sortOrder: 3 },
+      { name: '40 - 150 km', description: 'Neighbouring counties via courier.', minKm: '40', maxKm: '150', fee: '1200', estimatedTime: '1-2 days', sortOrder: 4 },
+      { name: 'Over 150 km', description: 'Upcountry courier delivery.', minKm: '150', maxKm: null, fee: '1800', estimatedTime: '2-3 days', sortOrder: 5 }
+    ]);
+  }
 
   console.log('Seeding store location…');
   await db.delete(stores);
@@ -171,11 +218,13 @@ async function run() {
   ]);
 
   console.log('Seeding coupons…');
-  await db.delete(coupons);
-  await db.insert(coupons).values([
-    { code: 'WELCOME5', discountType: 'percentage', discountValue: '5', minOrderAmount: '10000', maxDiscountAmount: '5000', isActive: true, description: '5% off your first order over KES 10,000' },
+  // Upsert by code — never delete: referral reward coupons live in this table too.
+  for (const coupon of [
+    { code: 'WELCOME5', discountType: 'percentage', discountValue: '5', minOrderAmount: '10000', maxDiscountAmount: '5000', perUserLimit: 1, isActive: true, description: '5% off your first order over KES 10,000 (once per customer)' },
     { code: 'BULK10', discountType: 'percentage', discountValue: '10', minOrderAmount: '100000', maxDiscountAmount: '20000', isActive: true, description: '10% off bulk office equipment orders over KES 100,000' }
-  ]);
+  ]) {
+    await db.insert(coupons).values(coupon).onConflictDoUpdate({ target: coupons.code, set: { description: coupon.description, perUserLimit: coupon.perUserLimit ?? null } });
+  }
 
   console.log('Seeding categories…');
   const categoryIdBySlug = {};
@@ -202,16 +251,20 @@ async function run() {
   console.log('Seeding products…');
   for (const [name, brandSlug, categorySlug, sku, price, compareAtPrice, stock, condition, warranty, shortSpecs, description, thumbnailUrl, isFeatured] of PRODUCTS) {
     const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+    const details = PRODUCT_DETAILS[sku];
+    const listingSpecs = specsFromListing(categorySlug, shortSpecs, { condition, warranty, brandName: BRANDS.find((b) => b.slug === brandSlug)?.name });
     const values = {
       name, slug, sku,
       brandId: brandIdBySlug[brandSlug] || null,
       categoryId: categoryIdBySlug[categorySlug],
-      shortSpecs, description,
+      shortSpecs,
+      description: details?.description || description,
       price: String(price),
       compareAtPrice: compareAtPrice ? String(compareAtPrice) : null,
       condition, warranty, stock,
       thumbnailUrl,
       images: [thumbnailUrl],
+      specs: details ? { ...(listingSpecs.General ? { General: listingSpecs.General } : {}), ...details.specs } : listingSpecs,
       isFeatured: !!isFeatured
     };
     await db
@@ -219,7 +272,7 @@ async function run() {
       .values(values)
       .onConflictDoUpdate({
         target: products.sku,
-        set: { name, slug, categoryId: values.categoryId, brandId: values.brandId, price: values.price, compareAtPrice: values.compareAtPrice, condition, warranty, shortSpecs, description, thumbnailUrl, images: values.images, isFeatured: values.isFeatured }
+        set: { name, slug, categoryId: values.categoryId, brandId: values.brandId, price: values.price, compareAtPrice: values.compareAtPrice, condition, warranty, shortSpecs, description: values.description, thumbnailUrl, images: values.images, specs: values.specs, isFeatured: values.isFeatured }
       });
   }
 

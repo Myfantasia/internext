@@ -1,90 +1,66 @@
-import React, { useState, useEffect } from 'react';
-import { Flame, Clock, ArrowRight, Zap } from 'lucide-react';
-import { useStore } from '../../context/StoreContext';
+import React, { useEffect, useState } from 'react';
+import { Flame, ArrowRight } from 'lucide-react';
 import { ProductCard } from '../common/ProductCard';
+import { DealCountdown } from '../common/DealCountdown';
+import { syncServerClock } from '../../utils/serverClock';
+import { Product } from '../../types';
 
+interface LiveDeal {
+  id: string;
+  title: string;
+  endsAt: string;
+  remaining: number | null;
+  product: Product;
+}
+
+// Shows the deals an admin scheduled under Admin → Flash Deals. Hidden when
+// none are live. Each card carries its own server-synchronised countdown.
 export const FlashDeals: React.FC = () => {
-  const { products } = useStore();
+  const [deals, setDeals] = useState<LiveDeal[]>([]);
 
-  // 12-hour countdown simulation
-  const [timeLeft, setTimeLeft] = useState({
-    hours: 11,
-    minutes: 42,
-    seconds: 19
-  });
+  const load = () => fetch('/api/flash-deals?limit=8', { cache: 'no-store' })
+    .then((r) => (r.ok ? r.json() : null))
+    .then((d) => {
+      if (!d?.success) return;
+      syncServerClock(d.serverTime);
+      setDeals(d.deals || []);
+    })
+    .catch(() => {});
 
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setTimeLeft((prev) => {
-        if (prev.seconds > 0) {
-          return { ...prev, seconds: prev.seconds - 1 };
-        } else if (prev.minutes > 0) {
-          return { ...prev, minutes: prev.minutes - 1, seconds: 59 };
-        } else if (prev.hours > 0) {
-          return { hours: prev.hours - 1, minutes: 59, seconds: 59 };
-        }
-        return { hours: 12, minutes: 0, seconds: 0 };
-      });
-    }, 1000);
-    return () => clearInterval(timer);
-  }, []);
+  useEffect(() => { load(); }, []);
 
-  const flashDealProducts = products.filter((p) => p.isFlashDeal).slice(0, 4);
-
-  if (flashDealProducts.length === 0) return null;
+  if (!deals.length) return null;
+  const soonest = deals.reduce((a, b) => (new Date(a.endsAt) < new Date(b.endsAt) ? a : b));
 
   return (
-    <section className="py-12 sm:py-16 bg-[#070b18] border-t border-b border-slate-800/80 px-3 sm:px-4 lg:px-5">
+    <section className="py-12 sm:py-16 border-y border-slate-800/80 px-4 lg:px-5 aurora-bg" aria-labelledby="flash-deals-title">
       <div className="max-w-[1520px] mx-auto">
-        {/* Header with Live Countdown */}
-        <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 mb-8 bg-gradient-to-r from-amber-950/40 via-slate-900 to-slate-950 p-6 rounded-2xl border border-amber-500/20">
+        <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 mb-8">
           <div className="space-y-1">
-            <div className="inline-flex items-center gap-1.5 text-xs font-bold text-amber-400 uppercase tracking-wider">
-              <Flame className="w-4 h-4 text-amber-400 animate-pulse" />
-              <span>Limited-Time Price Cuts</span>
-            </div>
-            <h2 className="text-2xl sm:text-3xl font-black text-white tracking-tight">
-              Internext Flash Deals
-            </h2>
-            <p className="text-xs text-slate-400">Exclusive discounts on sealed smartphones, laptops & accessories in Kenya</p>
+            <div className="eyebrow !text-amber-400 flex items-center gap-1.5"><Flame className="w-4 h-4" aria-hidden="true" />Limited-time prices</div>
+            <h2 id="flash-deals-title" className="section-title">Flash deals</h2>
+            <p className="text-sm text-slate-400">Prices apply automatically at checkout while the deal is live and stock lasts.</p>
           </div>
-
-          {/* Countdown Clock */}
-          <div className="flex items-center gap-2">
-            <div className="flex items-center gap-1.5 text-xs font-bold text-slate-400 uppercase mr-2">
-              <Clock className="w-4 h-4 text-amber-400" /> Ends In:
-            </div>
-
-            <div className="flex items-center gap-1.5 text-center font-mono">
-              <div className="bg-slate-950 border border-amber-500/30 rounded-xl px-3 py-1.5 min-w-[44px]">
-                <div className="text-lg font-black text-amber-400 leading-tight">
-                  {timeLeft.hours.toString().padStart(2, '0')}
-                </div>
-                <div className="text-[9px] text-slate-400 font-sans uppercase">Hours</div>
-              </div>
-              <span className="text-amber-400 font-bold">:</span>
-              <div className="bg-slate-950 border border-amber-500/30 rounded-xl px-3 py-1.5 min-w-[44px]">
-                <div className="text-lg font-black text-amber-400 leading-tight">
-                  {timeLeft.minutes.toString().padStart(2, '0')}
-                </div>
-                <div className="text-[9px] text-slate-400 font-sans uppercase">Mins</div>
-              </div>
-              <span className="text-amber-400 font-bold">:</span>
-              <div className="bg-slate-950 border border-amber-500/30 rounded-xl px-3 py-1.5 min-w-[44px]">
-                <div className="text-lg font-black text-amber-400 leading-tight">
-                  {timeLeft.seconds.toString().padStart(2, '0')}
-                </div>
-                <div className="text-[9px] text-slate-400 font-sans uppercase">Secs</div>
-              </div>
-            </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="text-xs font-bold text-slate-400 uppercase">Next deal ends in</span>
+            <DealCountdown endsAt={soonest.endsAt} onExpire={load} />
           </div>
         </div>
 
-        {/* Product Cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-          {flashDealProducts.map((product) => (
-            <ProductCard key={product.id} product={product} />
+        <div className="snap-row">
+          {deals.map((deal) => (
+            <div key={deal.id} className="space-y-2 min-w-0 reveal-on-scroll">
+              <ProductCard product={deal.product} />
+              <div className="flex items-center justify-between gap-2 px-1 text-xs">
+                <DealCountdown endsAt={deal.endsAt} compact onExpire={load} />
+                {deal.remaining != null && <span className="text-amber-300 font-semibold">{deal.remaining} left</span>}
+              </div>
+            </div>
           ))}
+        </div>
+
+        <div className="mt-6 text-right">
+          <a href="/shop?flashDeal=true" className="inline-flex items-center gap-1.5 text-sm font-bold text-cyan-400 hover:underline">All deals <ArrowRight className="w-4 h-4" aria-hidden="true" /></a>
         </div>
       </div>
     </section>

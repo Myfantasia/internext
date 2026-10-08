@@ -1,6 +1,6 @@
-import { eq, and, ilike, gte, lte, inArray, desc, asc, sql, or } from 'drizzle-orm';
+import { eq, and, ilike, gte, lt, lte, inArray, desc, asc, sql, or } from 'drizzle-orm';
 import { db } from '../db/client.js';
-import { categories, brands, products, productVariants } from '../db/schema.js';
+import { categories, brands, products, productVariants, orders, orderItems } from '../db/schema.js';
 import { isUuid } from '../db/util.js';
 import { getLiveFlashDeals, listLiveFlashDealProductIds, toPublicDeal } from '../services/pricing.js';
 
@@ -324,5 +324,140 @@ export async function deleteProduct(id) {
 export async function getProductById(id) {
   if (!isUuid(id)) return null;
   const [row] = await db.select().from(products).where(eq(products.id, id)).limit(1);
+  return row || null;
+}
+
+// ---------------------------------------------------------------------------
+// Admin catalog: server-side paginated listing and category/brand insights.
+// ---------------------------------------------------------------------------
+
+const ADMIN_SORTS = {
+  'name-asc': () => [asc(products.name)],
+  'name-desc': () => [desc(products.name)],
+  'price-asc': () => [asc(products.price)],
+  'price-desc': () => [desc(products.price)],
+  'stock-asc': () => [asc(sql`${products.stock} - ${products.reservedStock}`)],
+  'stock-desc': () => [desc(sql`${products.stock} - ${products.reservedStock}`)],
+  'updated-desc': () => [desc(products.updatedAt)],
+  'created-desc': () => [desc(products.createdAt)]
+};
+
+// Available = on hand minus units held by unpaid orders.
+const AVAILABLE = sql`(${products.stock} - ${products.reservedStock})`;
+
+function adminProductConditions({ search, categoryId, brandId, stock, status, minPrice, maxPrice }) {
+  const conditions = [];
+  if (status === 'active') conditions.push(eq(products.isActive, true));
+  else if (status === 'inactive') conditions.push(eq(products.isActive, false));
+  if (categoryId && isUuid(categoryId)) conditions.push(eq(products.categoryId, categoryId));
+  if (brandId === 'none') conditions.push(sql`${products.brandId} IS NULL`);
+  else if (brandId && isUuid(brandId)) conditions.push(eq(products.brandId, brandId));
+  if (stock === 'out') conditions.push(sql`${AVAILABLE} <= 0`);
+  else if (stock === 'low') conditions.push(sql`${AVAILABLE} > 0 AND ${products.stock} <= ${products.reorderLevel}`);
+  else if (stock === 'in') conditions.push(sql`${AVAILABLE} > 0`);
+  const min = Number(minPrice);
+  const max = Number(maxPrice);
+  if (minPrice !== undefined && minPrice !== '' && Number.isFinite(min)) conditions.push(gte(products.price, String(min)));
+  if (maxPrice !== undefined && maxPrice !== '' && Number.isFinite(max)) conditions.push(lte(products.price, String(max)));
+  if (search && String(search).trim()) conditions.push(searchCondition(search));
+  return conditions;
+}
+
+// Staff product table: includes hidden products, stock filters and stable
+// paging. `counts` answer "how many are low/out of stock" for the filter chips
+// under the current search/category/brand (ignoring the stock/status chip itself).
+export async function listProductsAdmin(query = {}) {
+  const pageNum = Math.max(1, parseInt(query.page, 10) || 1);
+  const limitNum = Math.min(Math.max(5, parseInt(query.limit, 10) || 25), 100);
+  const conditions = adminProductConditions(query);
+  const where = conditions.length ? and(...conditions) : undefined;
+  const sortKey = ADMIN_SORTS[query.sort] ? query.sort : (query.search ? null : 'updated-desc');
+  const orderBy = sortKey ? ADMIN_SORTS[sortKey]() : [desc(searchRank(query.search))];
+  orderBy.push(asc(products.id));
+
+  const base = () => db.select({ products, brands, categories }).from(products)
+    .leftJoin(brands, eq(products.brandId, brands.id))
+    .leftJoin(categories, eq(products.categoryId, categories.id));
+
+  const chipConditions = adminProductConditions({ ...query, stock: undefined, status: undefined });
+  const chipWhere = chipConditions.length ? and(...chipConditions) : undefined;
+
+  const [rows, [{ total }], [counts]] = await Promise.all([
+    base().where(where).orderBy(...orderBy).limit(limitNum).offset((pageNum - 1) * limitNum),
+    db.select({ total: sql`count(*)::int` }).from(products)
+      .leftJoin(brands, eq(products.brandId, brands.id)).leftJoin(categories, eq(products.categoryId, categories.id)).where(where),
+    db.select({
+      all: sql`count(*)::int`,
+      active: sql`count(*) filter (where ${products.isActive})::int`,
+      inactive: sql`count(*) filter (where not ${products.isActive})::int`,
+      out: sql`count(*) filter (where ${AVAILABLE} <= 0)::int`,
+      low: sql`count(*) filter (where ${AVAILABLE} > 0 and ${products.stock} <= ${products.reorderLevel})::int`
+    }).from(products)
+      .leftJoin(brands, eq(products.brandId, brands.id)).leftJoin(categories, eq(products.categoryId, categories.id)).where(chipWhere)
+  ]);
+
+  return {
+    products: rows.map((r) => ({ ...withRelations(r), available: r.products.stock - r.products.reservedStock })),
+    total,
+    page: pageNum,
+    limit: limitNum,
+    totalPages: Math.max(1, Math.ceil(total / limitNum)),
+    counts
+  };
+}
+
+// Stock, pricing and recent sales for one category or brand (paid orders only).
+export async function getCatalogInsights({ categoryId, brandId }) {
+  const scope = categoryId ? eq(products.categoryId, categoryId) : eq(products.brandId, brandId);
+  const since30 = new Date(Date.now() - 30 * 86400000);
+  const since60 = new Date(Date.now() - 60 * 86400000);
+
+  const [[inventory], [sales]] = await Promise.all([
+    db.select({
+      totalProducts: sql`count(*)::int`,
+      activeProducts: sql`count(*) filter (where ${products.isActive})::int`,
+      inStock: sql`count(*) filter (where ${AVAILABLE} > 0)::int`,
+      outOfStock: sql`count(*) filter (where ${AVAILABLE} <= 0)::int`,
+      lowStock: sql`count(*) filter (where ${AVAILABLE} > 0 and ${products.stock} <= ${products.reorderLevel})::int`,
+      inventoryValue: sql`coalesce(sum(${products.price} * ${products.stock}), 0)::float`,
+      avgPrice: sql`coalesce(avg(${products.price}), 0)::float`,
+      minPrice: sql`coalesce(min(${products.price}), 0)::float`,
+      maxPrice: sql`coalesce(max(${products.price}), 0)::float`
+    }).from(products).where(scope),
+    db.select({
+      unitsSold: sql`coalesce(sum(${orderItems.quantity}), 0)::int`,
+      revenue30: sql`coalesce(sum(${orderItems.unitPrice} * ${orderItems.quantity}) filter (where ${gte(orders.paidAt, since30)}), 0)::float`,
+      revenuePrev30: sql`coalesce(sum(${orderItems.unitPrice} * ${orderItems.quantity}) filter (where ${and(gte(orders.paidAt, since60), lt(orders.paidAt, since30))}), 0)::float`
+    }).from(orderItems)
+      .innerJoin(orders, eq(orderItems.orderId, orders.id))
+      .innerJoin(products, eq(orderItems.productId, products.id))
+      .where(and(scope, eq(orders.paymentStatus, 'Paid')))
+  ]);
+
+  return {
+    inventory,
+    sales: { ...sales, revenueChange: sales.revenuePrev30 > 0 ? (sales.revenue30 - sales.revenuePrev30) / sales.revenuePrev30 : null }
+  };
+}
+
+export async function countProductsIn({ categoryId, brandId }) {
+  const [row] = await db.select({ n: sql`count(*)::int` }).from(products)
+    .where(categoryId ? eq(products.categoryId, categoryId) : eq(products.brandId, brandId));
+  return row.n;
+}
+
+export async function deleteCategory(id) {
+  const [row] = await db.delete(categories).where(eq(categories.id, id)).returning({ id: categories.id, name: categories.name });
+  return row || null;
+}
+
+export async function deleteBrand(id) {
+  const [row] = await db.delete(brands).where(eq(brands.id, id)).returning({ id: brands.id, name: brands.name });
+  return row || null;
+}
+
+export async function findBrandById(id) {
+  if (!isUuid(id)) return null;
+  const [row] = await db.select().from(brands).where(eq(brands.id, id)).limit(1);
   return row || null;
 }

@@ -240,6 +240,17 @@ html.light .text-slate-500 { color: #646c64; } /* lift muted text to AA contrast
     .modal-panel { border-radius: 1.5rem; animation-name: popIn; }
   }
   .modal-wide { max-width: 64rem; }
+  /* Two-column forms: each column scrolls on its own on wide screens. */
+  @media (min-width: 1024px) {
+    .modal-split { height: min(92dvh, 60rem); }
+    .modal-split .modal-body { overflow: hidden; display: flex; }
+    .modal-split .modal-body > form { flex: 1 1 auto; min-height: 0; }
+    .split-col { min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding-right: .25rem; }
+  }
+  /* Side drawer for record details: full screen on phones, a right-hand panel from 640px. */
+  .drawer-backdrop { position: fixed; inset: 0; z-index: 60; background: rgba(5, 10, 8, .55); backdrop-filter: blur(2px); display: flex; justify-content: flex-end; overscroll-behavior: contain; }
+  .drawer-panel { width: 100%; height: 100dvh; display: flex; flex-direction: column; overflow: hidden; background: var(--t-slate-900); border-left: 1px solid var(--t-slate-800); box-shadow: var(--t-shadow); animation: drawerIn .25s cubic-bezier(.2,.7,.2,1) both; }
+  @media (min-width: 640px) { .drawer-md { max-width: 32rem; } .drawer-lg { max-width: 46rem; } .drawer-xl { max-width: 64rem; } }
   .modal-medium { max-width: 40rem; }
 
   .location-map { height: 320px; width: 100%; overflow: hidden; border-radius: 1rem; border: 1px solid var(--t-slate-800); background: var(--t-slate-950); }
@@ -260,6 +271,7 @@ html.light .text-slate-500 { color: #646c64; } /* lift muted text to AA contrast
    Motion — subtle, transform/opacity only, disabled by prefers-reduced-motion
    --------------------------------------------------------------------------- */
 @keyframes sheetUp { from { transform: translateY(24px); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes drawerIn { from { transform: translateX(32px); opacity: 0; } to { transform: none; opacity: 1; } }
 @keyframes popIn { from { transform: scale(.97); opacity: 0; } to { transform: none; opacity: 1; } }
 @keyframes aurora { 0% { transform: translate3d(-6%, -4%, 0) rotate(0deg); } 50% { transform: translate3d(6%, 4%, 0) rotate(12deg); } 100% { transform: translate3d(-6%, -4%, 0) rotate(0deg); } }
 @keyframes tick { from { transform: translateY(-35%); opacity: 0; } to { transform: none; opacity: 1; } }
@@ -317,3 +329,19 @@ button, a, .card-hover { transition: color .2s ease, background-color .2s ease, 
   body:has(.print-overlay) > #root { display: none !important; }
   .print-overlay { position: static !important; inset: auto !important; background: white !important; backdrop-filter: none !important; padding: 0 !important; overflow: visible !important; }
 }
+
+/* ---------------------------------------------------------------------------
+   Data visualisation tokens (validated: categorical slots 1–4 pass CVD and
+   normal-vision separation on both card surfaces; light slots 3–4 sit below
+   3:1, so every multi-colour chart ships value labels + a table view).
+   --------------------------------------------------------------------------- */
+.viz {
+  --viz-1: #3987e5; --viz-2: #d95926; --viz-3: #199e70; --viz-4: #c98500;
+  --viz-prev: #7d8a83; --viz-grid: rgba(255,255,255,.07); --viz-axis: #93a097;
+  --viz-good: #0ca30c; --viz-warning: #fab219; --viz-critical: #d03b3b;
+}
+html.light .viz {
+  --viz-1: #2a78d6; --viz-2: #eb6834; --viz-3: #1baf7a; --viz-4: #eda100;
+  --viz-prev: #8b938c; --viz-grid: rgba(15,31,22,.08); --viz-axis: #646c64;
+}
+.viz-tooltip { position: absolute; z-index: 5; pointer-events: none; min-width: 9rem; padding: .5rem .65rem; border-radius: .6rem; background: var(--t-slate-950); border: 1px solid var(--t-slate-700); box-shadow: var(--t-shadow); font-size: .75rem; color: var(--t-slate-200); white-space: nowrap; }

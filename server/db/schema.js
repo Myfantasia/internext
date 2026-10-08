@@ -7,6 +7,7 @@ import {
   numeric,
   boolean,
   timestamp,
+  date,
   jsonb,
   uniqueIndex,
   index,
@@ -614,6 +615,8 @@ export const orders = pgTable('orders', {
   index('orders_payment_status_idx').on(t.paymentStatus),
   index('orders_payment_reference_idx').on(t.paymentReference),
   index('orders_created_at_idx').on(t.createdAt),
+  // Finance dashboard: revenue is booked by payment date.
+  index('orders_paid_at_idx').on(t.paidAt),
   check('orders_total_nonneg', sql`${t.total} >= 0`)
 ]));
 
@@ -628,6 +631,9 @@ export const orderItems = pgTable('order_items', {
   unitPrice: numeric('unit_price', { precision: 12, scale: 2 }).notNull(),
   // Catalog price before any flash deal; equals unitPrice when no deal applied.
   originalUnitPrice: numeric('original_unit_price', { precision: 12, scale: 2 }),
+  // Product cost price when the order was placed (cost of goods sold).
+  // Null when the product had no cost price recorded.
+  unitCost: numeric('unit_cost', { precision: 12, scale: 2 }),
   flashDealId: uuid('flash_deal_id').references(() => flashDeals.id, { onDelete: 'set null' }),
   shortDescription: text('short_description'),
   quantity: integer('quantity').notNull(),
@@ -647,6 +653,29 @@ export const orderStatusHistory = pgTable('order_status_history', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow()
 }, (t) => ([
   index('order_status_history_order_idx').on(t.orderId)
+]));
+
+// Business running costs entered by admins (rent, salaries, utilities, …).
+// Stock purchases are NOT recorded here: the cost of goods sold comes from
+// order_items.unit_cost, so recording stock here too would count it twice.
+export const EXPENSE_CATEGORIES = ['Rent', 'Salaries & wages', 'Utilities', 'Internet & phone', 'Transport & delivery', 'Marketing', 'Repairs & maintenance', 'Bank & payment fees', 'Taxes & licences', 'Office supplies', 'Other'];
+
+export const expenses = pgTable('expenses', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  // The day the cost was incurred (Nairobi date), used for period reporting.
+  spentOn: date('spent_on').notNull(),
+  category: text('category').notNull(),
+  description: text('description').notNull(),
+  amount: numeric('amount', { precision: 12, scale: 2 }).notNull(),
+  paymentMethod: text('payment_method'),
+  reference: text('reference'),
+  createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow()
+}, (t) => ([
+  index('expenses_spent_on_idx').on(t.spentOn),
+  index('expenses_category_idx').on(t.category),
+  check('expenses_amount_positive', sql`${t.amount} > 0`)
 ]));
 
 export const payments = pgTable('payments', {

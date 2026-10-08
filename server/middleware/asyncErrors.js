@@ -43,6 +43,19 @@ export function errorHandler(err, req, res, _next) {
   if (err?.type === 'entity.too.large') {
     return res.status(413).json({ success: false, message: 'Request body is too large.' });
   }
+  // A database rule rejected the write (bad reference, duplicate, failed CHECK).
+  // That is the client's data, not a server fault: say so without leaking SQL.
+  const pgCode = err?.code || err?.cause?.code;
+  const dbMessages = {
+    23503: 'A record this depends on no longer exists. Refresh the page and try again.',
+    23505: 'A record with these details already exists.',
+    23514: 'Some values are outside the allowed range. Check the form and try again.',
+    23502: 'A required field is missing.'
+  };
+  if (dbMessages[pgCode]) {
+    console.warn(`[db-rule] ${req.method} ${req.originalUrl}: ${pgCode} ${err?.cause?.constraint_name || err?.constraint_name || ''}`);
+    return res.status(pgCode === '23505' ? 409 : 400).json({ success: false, message: dbMessages[pgCode] });
+  }
   console.error(`[error] ${req.method} ${req.originalUrl}:`, err);
   const status = Number.isInteger(err?.status) && err.status >= 400 && err.status < 600 ? err.status : 500;
   res.status(status).json({

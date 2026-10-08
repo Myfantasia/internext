@@ -1,5 +1,5 @@
 import express from 'express';
-import { listCategories, createCategory, updateCategory } from '../repositories/catalogRepo.js';
+import { listCategories, createCategory, updateCategory, findCategoryBySlugOrId, getCatalogInsights, countProductsIn, deleteCategory } from '../repositories/catalogRepo.js';
 import { isUuid } from '../db/util.js';
 import { logAudit } from '../repositories/auditLogsRepo.js';
 import { requirePermission } from '../middleware/authorize.js';
@@ -25,6 +25,14 @@ router.post('/', requirePermission('categories:write'), async (req, res) => {
   res.status(201).json({ success: true, category });
 });
 
+// Category detail: inventory, pricing and sales figures for the admin drawer.
+router.get('/:id/insights', requirePermission('categories:read'), async (req, res) => {
+  if (!isUuid(req.params.id)) return res.status(404).json({ success: false, message: 'Category not found' });
+  const category = await findCategoryBySlugOrId(req.params.id);
+  if (!category) return res.status(404).json({ success: false, message: 'Category not found' });
+  res.json({ success: true, category, ...(await getCatalogInsights({ categoryId: category.id })) });
+});
+
 router.put('/:id', requirePermission('categories:write'), async (req, res) => {
   if (!isUuid(req.params.id)) return res.status(404).json({ success: false, message: 'Category not found' });
   const { name, description, imageUrl, icon, sortOrder, kind } = req.body || {};
@@ -40,6 +48,19 @@ router.put('/:id', requirePermission('categories:write'), async (req, res) => {
   if (!category) return res.status(404).json({ success: false, message: 'Category not found' });
   await logAudit({ actorId: req.user.id, actorName: req.user.name, action: 'CATEGORY_UPDATE', entity: 'Category', entityId: category.id, newValue: category.name, ip: req.ip });
   res.json({ success: true, category });
+});
+
+// Only an empty category can be deleted (products must keep a category).
+router.delete('/:id', requirePermission('categories:write'), async (req, res) => {
+  if (!isUuid(req.params.id)) return res.status(404).json({ success: false, message: 'Category not found' });
+  const count = await countProductsIn({ categoryId: req.params.id });
+  if (count > 0) {
+    return res.status(409).json({ success: false, message: `This category still has ${count} product${count === 1 ? '' : 's'}. Move or delete them first.` });
+  }
+  const deleted = await deleteCategory(req.params.id);
+  if (!deleted) return res.status(404).json({ success: false, message: 'Category not found' });
+  await logAudit({ actorId: req.user.id, actorName: req.user.name, action: 'CATEGORY_DELETE', entity: 'Category', entityId: deleted.id, previousValue: deleted.name, ip: req.ip });
+  res.json({ success: true });
 });
 
 export default router;

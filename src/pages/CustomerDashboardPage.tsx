@@ -119,7 +119,7 @@ export const CustomerDashboardPage: React.FC = () => {
       <div className="max-w-[1520px] mx-auto px-3 sm:px-4 lg:px-5 py-8 flex-1 w-full">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
           {/* Left Navigation Sidebar */}
-          <aside className="lg:col-span-3 space-y-2">
+          <aside className="lg:col-span-3 space-y-2 lg:sticky lg:top-32 self-start">
             {/* Phones/tablets: a horizontally scrollable tab strip; desktop: a vertical menu. */}
             <nav aria-label="Account sections" className="bg-slate-900 border border-slate-800 rounded-3xl p-2 lg:p-3 flex gap-1 overflow-x-auto scrollbar-none lg:block lg:space-y-1 shadow-xl">
               {[

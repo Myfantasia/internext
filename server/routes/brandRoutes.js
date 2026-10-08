@@ -1,5 +1,5 @@
 import express from 'express';
-import { listBrands, createBrand, updateBrand } from '../repositories/catalogRepo.js';
+import { listBrands, createBrand, updateBrand, findBrandById, getCatalogInsights, countProductsIn, deleteBrand } from '../repositories/catalogRepo.js';
 import { isUuid } from '../db/util.js';
 import { logAudit } from '../repositories/auditLogsRepo.js';
 import { requirePermission } from '../middleware/authorize.js';
@@ -21,9 +21,17 @@ router.post('/', requirePermission('brands:write'), async (req, res) => {
   res.status(201).json({ success: true, brand });
 });
 
+// Brand detail: inventory, pricing and sales figures for the admin drawer.
+router.get('/:id/insights', requirePermission('brands:read'), async (req, res) => {
+  const brand = await findBrandById(req.params.id);
+  if (!brand) return res.status(404).json({ success: false, message: 'Brand not found' });
+  res.json({ success: true, brand, ...(await getCatalogInsights({ brandId: brand.id })) });
+});
+
 router.put('/:id', requirePermission('brands:write'), async (req, res) => {
   if (!isUuid(req.params.id)) return res.status(404).json({ success: false, message: 'Brand not found' });
   const { name, logoUrl, description } = req.body || {};
+  if (name !== undefined && String(name).trim().length < 2) return res.status(400).json({ success: false, message: 'Brand name is required' });
   const brand = await updateBrand(req.params.id, {
     name: name !== undefined ? String(name).trim().slice(0, 120) : undefined,
     logoUrl: logoUrl !== undefined ? String(logoUrl).slice(0, 1000) || null : undefined,
@@ -32,6 +40,16 @@ router.put('/:id', requirePermission('brands:write'), async (req, res) => {
   if (!brand) return res.status(404).json({ success: false, message: 'Brand not found' });
   await logAudit({ actorId: req.user.id, actorName: req.user.name, action: 'BRAND_UPDATE', entity: 'Brand', entityId: brand.id, newValue: brand.name, ip: req.ip });
   res.json({ success: true, brand });
+});
+
+// Deleting a brand keeps its products; they simply become unbranded.
+router.delete('/:id', requirePermission('brands:write'), async (req, res) => {
+  if (!isUuid(req.params.id)) return res.status(404).json({ success: false, message: 'Brand not found' });
+  const count = await countProductsIn({ brandId: req.params.id });
+  const deleted = await deleteBrand(req.params.id);
+  if (!deleted) return res.status(404).json({ success: false, message: 'Brand not found' });
+  await logAudit({ actorId: req.user.id, actorName: req.user.name, action: 'BRAND_DELETE', entity: 'Brand', entityId: deleted.id, previousValue: deleted.name, newValue: `${count} product(s) left without a brand`, ip: req.ip });
+  res.json({ success: true, unbrandedProducts: count });
 });
 
 export default router;

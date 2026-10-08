@@ -1,4 +1,4 @@
-import { and, desc, eq, gt, isNull, lte, sql } from 'drizzle-orm';
+import { and, desc, eq, gt, isNull, lt, lte, sql } from 'drizzle-orm';
 import { db } from '../db/client.js';
 import { flashDeals, products } from '../db/schema.js';
 import { applyDiscount } from '../services/pricing.js';
@@ -89,7 +89,10 @@ export async function updateDeal(id, patch) {
 export async function findOverlappingDeal({ productId, startsAt, endsAt, excludeId }) {
   const rows = await db.select().from(flashDeals).where(and(
     eq(flashDeals.productId, productId), eq(flashDeals.isActive, true), isNull(flashDeals.archivedAt),
-    sql`${flashDeals.startsAt} < ${endsAt} AND ${flashDeals.endsAt} > ${startsAt}`
+    // Column helpers (not a raw sql`` fragment) so Drizzle converts the Dates:
+    // the postgres-js driver is configured to pass timestamps through untouched
+    // and throws on a raw Date parameter.
+    lt(flashDeals.startsAt, endsAt), gt(flashDeals.endsAt, startsAt)
   ));
   return rows.find((r) => r.id !== excludeId) || null;
 }

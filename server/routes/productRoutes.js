@@ -11,7 +11,8 @@ import {
   deleteProduct,
   getProductById,
   findCategoryByName,
-  findBrandByName
+  findBrandByName,
+  listProductsAdmin
 } from '../repositories/catalogRepo.js';
 import { listApprovedReviews, getRatingSummary } from '../repositories/reviewsRepo.js';
 import { logAudit } from '../repositories/auditLogsRepo.js';
@@ -97,6 +98,13 @@ router.get('/search/suggestions', async (req, res) => {
 // 2. Catalog with filters & sorting
 router.get('/', async (req, res) => {
   res.json(await listProducts(req.query));
+});
+
+// 2b. Staff product table: hidden products too, stock filters, server-side paging.
+// Declared before /:identifier so "admin" is not treated as a slug.
+router.get('/admin', requirePermission('products:read'), async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({ success: true, ...(await listProductsAdmin(req.query)) });
 });
 
 // 3. Single product by slug or id, with approved reviews and rating summary

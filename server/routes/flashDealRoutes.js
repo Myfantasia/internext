@@ -12,30 +12,44 @@ import { isUuid } from '../db/util.js';
 
 const router = express.Router();
 
+// Development diagnostics: why a deal was rejected, with the fields that
+// matter (never logged in production; the user always gets a safe message).
+function logRejected(req, reason) {
+  if (process.env.NODE_ENV === 'production') return;
+  const { productId, discountType, discountValue, startsAt, endsAt, quantityLimit, isActive } = req.body || {};
+  console.warn(`[flash-deals] ${req.method} ${req.originalUrl} rejected: ${reason}`, { productId, discountType, discountValue, startsAt, endsAt, quantityLimit, isActive });
+}
+
 const dealSchema = z.object({
   productId: z.string().uuid('Choose a product'),
   title: z.string().trim().min(3, 'Give the deal a title').max(120),
   description: z.string().trim().max(1000).optional().nullable(),
   discountType: z.enum(['percentage', 'fixed']),
-  discountValue: z.coerce.number().positive('Discount must be greater than zero'),
-  startsAt: z.coerce.date(),
-  endsAt: z.coerce.date(),
-  quantityLimit: z.coerce.number().int().positive().max(100_000).optional().nullable(),
+  discountValue: z.coerce.number().positive('The discount must be greater than zero'),
+  startsAt: z.coerce.date({ message: 'Choose when the deal starts' }),
+  endsAt: z.coerce.date({ message: 'Choose when the deal ends' }),
+  quantityLimit: z.coerce.number().int('Quantity must be a whole number').positive('Quantity must be at least 1').max(100_000).optional().nullable(),
   isActive: z.boolean().optional()
 }).superRefine((d, ctx) => {
-  if (d.endsAt <= d.startsAt) ctx.addIssue({ code: 'custom', path: ['endsAt'], message: 'The deal must end after it starts' });
-  if (d.discountType === 'percentage' && d.discountValue >= 100) ctx.addIssue({ code: 'custom', path: ['discountValue'], message: 'A percentage discount must be below 100%' });
+  if (d.endsAt <= d.startsAt) ctx.addIssue({ code: 'custom', path: ['endsAt'], message: 'The end date must be after the start date' });
+  if (d.discountType === 'percentage' && (d.discountValue < 1 || d.discountValue >= 100)) ctx.addIssue({ code: 'custom', path: ['discountValue'], message: 'The discount percentage must be between 1 and 99' });
 });
 
 async function validateAgainstProduct(data, excludeId) {
   const product = await getProductById(data.productId);
-  if (!product) return 'Product not found';
+  if (!product) return 'The selected product does not exist. Refresh the page and choose another.';
+  if (product.isActive === false) return 'This product is hidden from the store. Activate it before creating a deal.';
+  // Deal stock comes out of normal stock, so a cap above what is on hand would oversell.
+  const onHand = Number(product.stock ?? 0) - Number(product.reservedStock ?? 0);
+  if (data.quantityLimit != null && data.quantityLimit > onHand) {
+    return `Quantity at this price (${data.quantityLimit}) is more than the ${Math.max(0, onHand)} available in stock.`;
+  }
   if (data.discountType === 'fixed' && data.discountValue >= Number(product.price)) {
     return `The discount must be less than the product price (KES ${Number(product.price).toLocaleString('en-KE')})`;
   }
   if (data.isActive !== false) {
     const overlap = await findOverlappingDeal({ productId: data.productId, startsAt: data.startsAt, endsAt: data.endsAt, excludeId });
-    if (overlap) return `This product already has an active deal ("${overlap.title}") in that time window`;
+    if (overlap) return `An active flash deal ("${overlap.title}") already covers this product during those dates. Change the dates or deactivate that deal first.`;
   }
   return null;
 }
@@ -54,9 +68,15 @@ router.get('/admin', requirePermission('flash_deals:read'), async (req, res) => 
 
 router.post('/', requirePermission('flash_deals:write'), async (req, res) => {
   const parsed = dealSchema.safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ success: false, message: formatZodError(parsed.error) });
+  if (!parsed.success) {
+    logRejected(req, formatZodError(parsed.error));
+    return res.status(400).json({ success: false, message: formatZodError(parsed.error) });
+  }
   const problem = await validateAgainstProduct(parsed.data);
-  if (problem) return res.status(400).json({ success: false, message: problem });
+  if (problem) {
+    logRejected(req, problem);
+    return res.status(400).json({ success: false, message: problem });
+  }
 
   const deal = await createDeal({
     ...parsed.data, discountValue: String(parsed.data.discountValue), description: parsed.data.description || null,
@@ -71,12 +91,18 @@ router.put('/:id', requirePermission('flash_deals:write'), async (req, res) => {
   const existing = await findDeal(req.params.id);
   if (!existing) return res.status(404).json({ success: false, message: 'Deal not found' });
   const parsed = dealSchema.safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ success: false, message: formatZodError(parsed.error) });
+  if (!parsed.success) {
+    logRejected(req, formatZodError(parsed.error));
+    return res.status(400).json({ success: false, message: formatZodError(parsed.error) });
+  }
   if (parsed.data.quantityLimit != null && parsed.data.quantityLimit < existing.quantitySold) {
     return res.status(400).json({ success: false, message: `${existing.quantitySold} units have already sold at this price; the limit cannot be lower.` });
   }
   const problem = await validateAgainstProduct(parsed.data, existing.id);
-  if (problem) return res.status(400).json({ success: false, message: problem });
+  if (problem) {
+    logRejected(req, problem);
+    return res.status(400).json({ success: false, message: problem });
+  }
 
   const deal = await updateDeal(existing.id, {
     ...parsed.data, discountValue: String(parsed.data.discountValue), description: parsed.data.description || null,

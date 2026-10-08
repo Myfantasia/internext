@@ -3,7 +3,7 @@ import rateLimit from 'express-rate-limit';
 import { z } from 'zod';
 import { db } from '../db/client.js';
 import {
-  createOrder, findOrderByIdentifier, findOrdersForUser, findOrdersForCustomerOrPhone, listOrders,
+  createOrder, findOrderByIdentifier, findOrdersForUser, findOrdersForCustomerOrPhone, listOrdersPage,
   updateOrderStatus, cancelUnpaidOrder, canAccessOrder, priceCart, OrderError, PAYMENT_METHODS, CASH_ON_DELIVERY_MAX_KM
 } from '../repositories/ordersRepo.js';
 import { logAudit } from '../repositories/auditLogsRepo.js';
@@ -183,9 +183,10 @@ router.get('/customer/:query', requireAuth, async (req, res) => {
 });
 
 // 4. Admin/Sales Manager: list orders with filters.
+// Paged, filtered and sorted in SQL (see listOrdersPage).
 router.get('/', requirePermission('orders:read'), async (req, res) => {
-  const orders = await listOrders(req.query);
-  res.json({ success: true, orders, total: orders.length });
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({ success: true, ...(await listOrdersPage(req.query)) });
 });
 
 // 5. Order by number or id — owner/staff get everything, anyone else gets tracking progress only.

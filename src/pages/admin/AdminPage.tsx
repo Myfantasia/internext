@@ -20,6 +20,7 @@ import { AdminFlashDeals } from './AdminFlashDeals';
 import { AdminDelivery } from './AdminDelivery';
 import { AdminNews } from './AdminNews';
 import { AdminPayments } from './AdminPayments';
+import { AdminFinance } from './AdminFinance';
 import { ProfilePanel } from '../../components/account/ProfilePanel';
 import { useAuth } from '../../context/AuthContext';
 
@@ -28,24 +29,31 @@ export const AdminPage: React.FC = () => {
   // Keep the open section in the URL (?tab=…) so refresh and Back work, and
   // so a login redirect returns to the same section.
   const [activeTab, setActiveTabState] = useState<string>(() => new URLSearchParams(window.location.search).get('tab') || 'dashboard');
-  const setActiveTab = (tab: string) => {
+  // Remounts the section on every navigation so URL presets are re-read.
+  const [visit, setVisit] = useState(0);
+  // `params` travel in the URL so the opened section can pre-filter itself,
+  // e.g. openTab('products', { categoryId }) from a category's detail panel.
+  const setActiveTab = (tab: string, params?: Record<string, string>) => {
+    const qs = new URLSearchParams(tab === 'dashboard' ? {} : { tab, ...(params || {}) }).toString();
+    window.history.replaceState({}, '', qs ? `/admin?${qs}` : '/admin');
     setActiveTabState(tab);
-    window.history.replaceState({}, '', tab === 'dashboard' ? '/admin' : `/admin?tab=${encodeURIComponent(tab)}`);
+    setVisit((v) => v + 1);
     // Each section opens at its top, not wherever the previous one was scrolled to.
     window.scrollTo({ top: 0, left: 0, behavior: 'instant' as ScrollBehavior });
   };
 
   return (
-    <AdminLayout activeTab={activeTab} setActiveTab={setActiveTab}>
+    <AdminLayout activeTab={activeTab} setActiveTab={(tab) => setActiveTab(tab)}>
+      <React.Fragment key={visit}>
       {activeTab === 'dashboard' && <AdminDashboard onNavigate={setActiveTab} />}
       {activeTab === 'products' && <AdminProducts />}
-      {activeTab === 'categories' && <AdminCategories />}
-      {activeTab === 'brands' && <AdminBrands />}
+      {activeTab === 'categories' && <AdminCategories onNavigate={setActiveTab} />}
+      {activeTab === 'brands' && <AdminBrands onNavigate={setActiveTab} />}
       {activeTab === 'orders' && <AdminOrders />}
       {activeTab === 'inventory' && <AdminInventory />}
       {activeTab === 'coupons' && <AdminCoupons />}
       {activeTab === 'referrals' && <AdminReferralRewards />}
-      {activeTab === 'customers' && <AdminCustomers />}
+      {activeTab === 'customers' && <AdminCustomers onNavigate={setActiveTab} />}
       {activeTab === 'reviews' && <AdminReviews />}
       {activeTab === 'blog' && <AdminBlog />}
       {activeTab === 'newsletter' && <AdminNewsletter />}
@@ -58,6 +66,8 @@ export const AdminPage: React.FC = () => {
       {activeTab === 'news' && <AdminNews />}
       {activeTab === 'payments' && <AdminPayments />}
       {activeTab === 'profile' && <ProfilePanel />}
+      {activeTab === 'finance' && <AdminFinance onNavigate={setActiveTab} />}
+      </React.Fragment>
     </AdminLayout>
   );
 };

@@ -1,4 +1,4 @@
-import { eq, or, and, ilike, desc, sql, inArray, lt } from 'drizzle-orm';
+import { eq, or, and, ilike, desc, asc, sql, inArray, lt, gt, gte, lte } from 'drizzle-orm';
 import { db } from '../db/client.js';
 import {
   orders, orderItems, orderStatusHistory, products, productVariants, flashDeals, cartItems, carts, paymentAttempts
@@ -158,6 +158,7 @@ export async function priceCart(tx, { userId, couponCode, delivery, lockCoupon =
       thumbnailUrl: product.thumbnailUrl,
       quantity: item.quantity,
       available: variant ? variant.stock : product.stock - product.reservedStock,
+      unitCost: product.costPrice != null ? Number(product.costPrice) : null,
       lineTotal,
       hasFlashDeal: !!priced.flashDealId,
       ...priced
@@ -322,6 +323,7 @@ export async function createOrder({ userId, customer, couponCode, delivery, addr
         shortDescription: line.shortDescription,
         unitPrice: String(line.unitPrice),
         originalUnitPrice: String(line.originalUnitPrice),
+        unitCost: line.unitCost != null ? String(line.unitCost) : null,
         flashDealId: line.flashDealId,
         quantity: line.quantity,
         thumbnailUrl: line.thumbnailUrl
@@ -373,21 +375,73 @@ export async function findOrdersForCustomerOrPhone(query) {
   return Promise.all(rows.map((r) => toApiOrder(r)));
 }
 
-export async function listOrders({ status, paymentStatus, search, limit = 200 } = {}) {
+// Staff orders table: one page at a time, filtered and sorted in SQL. Items and
+// the latest payment attempt are loaded for the whole page in two queries
+// (no per-order round trips); the timeline is left for the order detail view.
+export async function listOrdersPage({ status, paymentStatus, paymentMethod, search, from, to, sort = 'newest', page = 1, limit = 25 } = {}) {
+  const pageNum = Math.max(1, parseInt(page, 10) || 1);
+  const limitNum = Math.min(Math.max(5, parseInt(limit, 10) || 25), 100);
   const conditions = [];
-  if (status) conditions.push(eq(orders.status, status));
   if (paymentStatus) conditions.push(eq(orders.paymentStatus, paymentStatus));
+  if (paymentMethod) conditions.push(eq(orders.paymentMethod, String(paymentMethod).slice(0, 60)));
   if (search) {
-    const q = `%${String(search).slice(0, 100)}%`;
-    conditions.push(or(ilike(orders.orderNumber, q), ilike(orders.customerName, q), ilike(orders.customerEmail, q), ilike(orders.paymentReference, q)));
+    const q = `%${String(search).trim().slice(0, 100).replace(/[%_\\]/g, (c) => `\\${c}`)}%`;
+    const digits = String(search).replace(/\D/g, '');
+    conditions.push(or(
+      ilike(orders.orderNumber, q), ilike(orders.customerName, q), ilike(orders.customerEmail, q), ilike(orders.paymentReference, q),
+      ...(digits.length >= 4 ? [sql`regexp_replace(coalesce(${orders.customerPhone}, ''), '\\D', '', 'g') LIKE ${'%' + (digits.startsWith('0') ? digits.slice(1) : digits) + '%'}`] : [])
+    ));
   }
-  const rows = await db
-    .select()
-    .from(orders)
-    .where(conditions.length ? and(...conditions) : undefined)
-    .orderBy(desc(orders.createdAt))
-    .limit(Math.min(Number(limit) || 200, 500));
-  return Promise.all(rows.map((r) => toApiOrder(r)));
+  if (/^\d{4}-\d{2}-\d{2}$/.test(from || '')) conditions.push(gte(orders.createdAt, new Date(`${from}T00:00:00+03:00`)));
+  if (/^\d{4}-\d{2}-\d{2}$/.test(to || '')) conditions.push(lte(orders.createdAt, new Date(`${to}T23:59:59.999+03:00`)));
+  const base = conditions.length ? and(...conditions) : undefined;
+  const where = status ? and(base, eq(orders.status, status)) : base;
+  const orderBy = {
+    newest: [desc(orders.createdAt)], oldest: [asc(orders.createdAt)],
+    'total-desc': [desc(orders.total)], 'total-asc': [asc(orders.total)]
+  }[sort] || [desc(orders.createdAt)];
+
+  const [rows, [{ total }], statusCounts] = await Promise.all([
+    db.select().from(orders).where(where).orderBy(...orderBy, desc(orders.id)).limit(limitNum).offset((pageNum - 1) * limitNum),
+    db.select({ total: sql`count(*)::int` }).from(orders).where(where),
+    // Tab counts ignore the status tab itself so every tab shows its number.
+    db.select({ status: orders.status, n: sql`count(*)::int` }).from(orders).where(base).groupBy(orders.status)
+  ]);
+
+  const ids = rows.map((r) => r.id);
+  const [items, attempts] = ids.length ? await Promise.all([
+    db.select().from(orderItems).where(inArray(orderItems.orderId, ids)),
+    db.execute(sql`select distinct on (${paymentAttempts.orderId}) * from ${paymentAttempts} where ${inArray(paymentAttempts.orderId, ids)} order by ${paymentAttempts.orderId}, ${paymentAttempts.createdAt} desc`)
+  ]) : [[], []];
+  const itemsBy = new Map();
+  for (const it of items) (itemsBy.get(it.orderId) || itemsBy.set(it.orderId, []).get(it.orderId)).push(it);
+  const attemptBy = new Map([...attempts].map((a) => [a.order_id, a]));
+
+  return {
+    orders: rows.map((o) => {
+      const latest = attemptBy.get(o.id);
+      return {
+        id: o.id, orderNumber: o.orderNumber, userId: o.userId,
+        customer: { name: o.customerName, email: o.customerEmail, phone: o.customerPhone },
+        items: (itemsBy.get(o.id) || []).map((it) => ({
+          productId: it.productId, variantId: it.variantId, name: it.name, variantName: it.variantName, sku: it.sku,
+          shortDescription: it.shortDescription, price: Number(it.unitPrice),
+          originalPrice: it.originalUnitPrice != null ? Number(it.originalUnitPrice) : Number(it.unitPrice),
+          flashDealId: it.flashDealId, quantity: it.quantity, thumbnail: it.thumbnailUrl
+        })),
+        subtotal: Number(o.subtotal), discountAmount: Number(o.discountAmount), couponCode: o.couponCode,
+        flashDealSavings: Number(o.flashDealSavings || 0), deliveryFee: Number(o.deliveryFee), taxAmount: Number(o.taxAmount),
+        taxRate: Number(o.taxRate), total: Number(o.total), currency: o.currency, status: o.status, paymentStatus: o.paymentStatus,
+        paymentMethod: o.paymentMethod, paymentReference: o.paymentReference, paidAt: o.paidAt,
+        latestPayment: latest ? { id: latest.id, provider: latest.provider, status: latest.status, reference: latest.provider_reference, failureReason: latest.failure_reason, createdAt: latest.created_at } : null,
+        deliveryMethod: o.deliveryMethod, deliveryAddress: o.deliveryAddress, deliveryQuote: o.deliveryQuote,
+        deliveryDistanceKm: o.deliveryDistanceKm != null ? Number(o.deliveryDistanceKm) : null,
+        trackingNumber: o.trackingNumber, timeline: [], createdAt: o.createdAt
+      };
+    }),
+    total, page: pageNum, limit: limitNum, totalPages: Math.max(1, Math.ceil(total / limitNum)),
+    statusCounts: Object.fromEntries(statusCounts.map((r) => [r.status, r.n]))
+  };
 }
 
 async function lockOrder(tx, identifier) {
@@ -561,7 +615,7 @@ export async function expireStaleUnpaidOrders({ olderThanMinutes = 120 } = {}) {
   let expired = 0;
   for (const { id } of stale) {
     const pending = await db.select({ id: paymentAttempts.id }).from(paymentAttempts)
-      .where(and(eq(paymentAttempts.orderId, id), eq(paymentAttempts.status, 'pending'), sql`${paymentAttempts.createdAt} > ${new Date(Date.now() - 30 * 60 * 1000)}`)).limit(1);
+      .where(and(eq(paymentAttempts.orderId, id), eq(paymentAttempts.status, 'pending'), gt(paymentAttempts.createdAt, new Date(Date.now() - 30 * 60 * 1000)))).limit(1);
     if (pending.length) continue; // a payment is still in flight
     try {
       await cancelUnpaidOrder(id, { note: `Automatically cancelled: no payment received within ${olderThanMinutes} minutes.` });

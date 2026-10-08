@@ -175,6 +175,75 @@ describe('RBAC — backend enforcement (not just UI hiding)', () => {
     expect(res.body.settings.mpesaPasskey).toBeUndefined();
   });
 
+  it('keeps customer profiles, finance figures and the admin product list staff-only', async () => {
+    for (const path of ['/api/admin/customers', '/api/admin/finance/overview', '/api/admin/expenses', '/api/products/admin']) {
+      const res = await request(app).get(path).set('Cookie', customerCookie);
+      expect(res.status, path).toBe(403);
+    }
+    const deactivate = await request(app).patch('/api/admin/customers/00000000-0000-4000-8000-000000000000/status').set('Cookie', customerCookie).send({ isActive: false });
+    expect(deactivate.status).toBe(403);
+  });
+
+  it('serves paginated customers, finance and admin products to an ADMIN', async () => {
+    const customers = await request(app).get('/api/admin/customers?limit=5&sort=spent').set('Cookie', adminCookie);
+    expect(customers.status).toBe(200);
+    expect(customers.body.limit).toBe(5);
+    expect(customers.body.customers.length).toBeLessThanOrEqual(5);
+    const finance = await request(app).get('/api/admin/finance/overview?from=2026-01-01&to=2026-12-31').set('Cookie', adminCookie);
+    expect(finance.status).toBe(200);
+    expect(finance.body.current).toHaveProperty('netProfit');
+    expect(Array.isArray(finance.body.series)).toBe(true);
+    const orders = await request(app).get('/api/orders?limit=5&sort=total-desc').set('Cookie', adminCookie);
+    expect(orders.status).toBe(200);
+    expect(orders.body.orders.length).toBeLessThanOrEqual(5);
+    expect(orders.body).toHaveProperty('statusCounts');
+    const products = await request(app).get('/api/products/admin?limit=5&stock=low').set('Cookie', adminCookie);
+    expect(products.status).toBe(200);
+    expect(products.body).toHaveProperty('counts');
+  });
+
+  it('records an expense, counts it in the period, and validates bad input', async () => {
+    const day = new Date().toLocaleDateString('en-CA', { timeZone: 'Africa/Nairobi' });
+    const future = await request(app).post('/api/admin/expenses').set('Cookie', adminCookie)
+      .send({ spentOn: '2999-01-01', category: 'Rent', description: 'Future', amount: 100 });
+    expect(future.status).toBe(400);
+    const zero = await request(app).post('/api/admin/expenses').set('Cookie', adminCookie)
+      .send({ spentOn: day, category: 'Rent', description: 'Zero', amount: 0 });
+    expect(zero.status).toBe(400);
+
+    const before = await request(app).get(`/api/admin/finance/overview?from=${day}&to=${day}`).set('Cookie', adminCookie);
+    const created = await request(app).post('/api/admin/expenses').set('Cookie', adminCookie)
+      .send({ spentOn: day, category: 'Utilities', description: `Test power bill ${suffix}`, amount: 1234.5 });
+    expect(created.status).toBe(201);
+    const after = await request(app).get(`/api/admin/finance/overview?from=${day}&to=${day}`).set('Cookie', adminCookie);
+    expect(after.body.current.expenses).toBeCloseTo(before.body.current.expenses + 1234.5, 2);
+
+    const removed = await request(app).delete(`/api/admin/expenses/${created.body.expense.id}`).set('Cookie', adminCookie);
+    expect(removed.status).toBe(200);
+  });
+
+  // Regression: POST /api/flash-deals used to 500 — the overlap check passed a
+  // raw Date into a sql`` fragment, which the postgres-js driver rejects.
+  it('creates a flash deal, refuses an overlapping one with a clear message, then archives it', async () => {
+    const list = await request(app).get('/api/products?limit=1');
+    const product = list.body.products?.[0];
+    expect(product).toBeTruthy();
+    const startsAt = new Date(Date.now() + 365 * 86400000).toISOString();
+    const endsAt = new Date(Date.now() + 366 * 86400000).toISOString();
+    const body = { productId: product.id, title: `Test deal ${suffix}`, discountType: 'percentage', discountValue: 5, startsAt, endsAt, isActive: true };
+
+    const created = await request(app).post('/api/flash-deals').set('Cookie', adminCookie).send(body);
+    expect(created.status).toBe(201);
+    const overlap = await request(app).post('/api/flash-deals').set('Cookie', adminCookie).send({ ...body, title: `Overlap ${suffix}` });
+    expect(overlap.status).toBe(400);
+    expect(overlap.body.message).toMatch(/already covers this product/);
+    const badPercent = await request(app).post('/api/flash-deals').set('Cookie', adminCookie).send({ ...body, discountValue: 150 });
+    expect(badPercent.status).toBe(400);
+
+    const archived = await request(app).delete(`/api/flash-deals/${created.body.deal.id}`).set('Cookie', adminCookie);
+    expect(archived.status).toBe(200);
+  });
+
   it('blocks a CUSTOMER from creating a sales-manager invite', async () => {
     const res = await request(app)
       .post('/api/admin/invites')

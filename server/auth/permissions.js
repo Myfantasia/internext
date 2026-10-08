@@ -31,6 +31,7 @@ const ADMIN_PERMISSIONS = [
   'blog:write',
   'newsletter:read',
   'payments:read', 'payments:refund',
+  'expenses:read', 'expenses:write',
   'flash_deals:read', 'flash_deals:write',
   'delivery:read', 'delivery:write',
   'referrals:read', 'referrals:write',

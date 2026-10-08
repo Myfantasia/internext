@@ -40,6 +40,8 @@ export const AdminFlashDeals: React.FC = () => {
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [productQuery, setProductQuery] = useState('');
+  // Shown inside the modal so the reason stays visible next to the form.
+  const [formError, setFormError] = useState('');
 
   const load = () => api<{ deals: Deal[] }>('/api/flash-deals/admin').then((d) => setDeals(d.deals)).catch((e) => showToast(e.message, 'error'));
   useEffect(() => { load(); }, []);
@@ -53,25 +55,52 @@ export const AdminFlashDeals: React.FC = () => {
     return products.filter((p) => !q || p.name.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q)).slice(0, 60);
   }, [products, productQuery]);
 
-  const startCreate = () => { setEditing(null); setForm(blank()); setProductQuery(''); setOpen(true); };
+  const startCreate = () => { setEditing(null); setForm(blank()); setProductQuery(''); setFormError(''); setOpen(true); };
   const startEdit = (d: Deal) => {
     setEditing(d);
     setForm({ productId: d.productId, title: d.title, description: d.description || '', discountType: d.discountType, discountValue: d.discountValue, startsAt: toLocalInput(d.startsAt), endsAt: toLocalInput(d.endsAt), quantityLimit: d.quantityLimit ?? '', isActive: d.isActive });
     setProductQuery('');
+    setFormError('');
     setOpen(true);
+  };
+
+  // Same rules the server enforces (server/routes/flashDealRoutes.js), checked
+  // here first so most mistakes are caught before a round trip.
+  const clientProblem = (): string | null => {
+    if (!form.productId) return 'Choose a product.';
+    if (form.title.trim().length < 3) return 'Give the deal a title (at least 3 characters).';
+    const value = Number(form.discountValue);
+    if (!(value > 0)) return 'The discount must be greater than zero.';
+    if (form.discountType === 'percentage' && (value < 1 || value >= 100)) return 'The discount percentage must be between 1 and 99.';
+    if (form.discountType === 'fixed' && selectedProduct && value >= selectedProduct.price) return `A fixed discount must be less than the product price (${formatPrice(selectedProduct.price)}).`;
+    if (!form.startsAt || !form.endsAt) return 'Choose when the deal starts and ends.';
+    if (new Date(form.endsAt) <= new Date(form.startsAt)) return 'The end date must be after the start date.';
+    if (form.quantityLimit !== '' && (!Number.isInteger(Number(form.quantityLimit)) || Number(form.quantityLimit) < 1)) return 'Quantity must be a whole number of at least 1, or left empty.';
+    if (form.quantityLimit !== '' && selectedProduct && Number(form.quantityLimit) > selectedProduct.stock) return `Quantity at this price is more than the ${selectedProduct.stock} in stock.`;
+    return null;
   };
 
   const save = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (saving) return;
+    const problem = clientProblem();
+    setFormError(problem || '');
+    if (problem) return;
     setSaving(true);
     try {
       const body = { ...form, startsAt: fromLocalInput(form.startsAt), endsAt: fromLocalInput(form.endsAt), quantityLimit: form.quantityLimit === '' ? null : Number(form.quantityLimit), discountValue: Number(form.discountValue) };
-      await api(editing ? `/api/flash-deals/${editing.id}` : '/api/flash-deals', { method: editing ? 'PUT' : 'POST', body });
-      showToast(editing ? 'Deal updated' : 'Deal created', 'success');
+      const res = await api<{ deal: Deal }>(editing ? `/api/flash-deals/${editing.id}` : '/api/flash-deals', { method: editing ? 'PUT' : 'POST', body });
+      showToast(editing ? 'Deal updated' : `Flash deal "${res.deal.title}" created`, 'success');
       setOpen(false);
+      // Show it straight away (with its product), then refresh from the server.
+      if (!editing && res.deal) {
+        setFilter('all');
+        setDeals((prev) => [{ ...res.deal, product: res.deal.product ?? (selectedProduct as any) }, ...(prev || [])]);
+      }
       load();
     } catch (err) {
-      showToast((err as Error).message, 'error');
+      // Keep the form open with what was typed, and say why it failed.
+      setFormError((err as Error).message || 'The flash deal could not be saved because of a server error.');
     } finally {
       setSaving(false);
     }
@@ -152,7 +181,12 @@ export const AdminFlashDeals: React.FC = () => {
             <button type="submit" form="deal-form" disabled={saving || !form.productId} className="btn btn-primary">{saving ? 'Saving…' : editing ? 'Save changes' : 'Create deal'}</button>
           </>}
         >
-          <form id="deal-form" onSubmit={save} className="grid grid-cols-1 md:grid-cols-2 gap-5">
+          <form id="deal-form" onSubmit={save} className="grid grid-cols-1 md:grid-cols-2 gap-5" noValidate>
+            {formError && (
+              <div className="md:col-span-2 callout callout-danger" role="alert" ref={(el) => el?.scrollIntoView({ block: 'nearest' })}>
+                <span>{formError}</span>
+              </div>
+            )}
             <Field label="Product" required className="md:col-span-2" hint="Search by name or SKU. A product can only have one active deal at a time.">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 <div className="relative">

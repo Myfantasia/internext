@@ -14,6 +14,12 @@ import {
 import { getDeliveryConfig } from '../services/delivery.js';
 import { verifyEmailTransport, sendTestEmail, activeProviderName } from '../services/email/index.js';
 import { isUuid } from '../db/util.js';
+import { listCustomers, getCustomerDetail } from '../repositories/customersRepo.js';
+import { getFinanceOverview } from '../repositories/financeRepo.js';
+import { listExpenses, findExpense, createExpense, updateExpense, deleteExpense } from '../repositories/expensesRepo.js';
+import { EXPENSE_CATEGORIES } from '../db/schema.js';
+import { setUserActive } from '../repositories/usersRepo.js';
+import { revokeAllSessionsForUser } from '../repositories/sessionsRepo.js';
 
 const router = express.Router();
 
@@ -135,6 +141,88 @@ router.get('/settings/public', async (req, res) => {
 router.get('/analytics', requirePermission('reports:read'), async (req, res) => {
   const analytics = await getDashboardAnalytics();
   res.json({ success: true, ...analytics });
+});
+
+// Customers: server-side search / filter / sort / paging, plus a full profile.
+router.get('/customers', requirePermission('customers:read'), async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({ success: true, ...(await listCustomers(req.query)) });
+});
+
+router.get('/customers/:id', requirePermission('customers:read'), async (req, res) => {
+  const detail = await getCustomerDetail(String(req.params.id));
+  if (!detail) return res.status(404).json({ success: false, message: 'Customer not found' });
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({ success: true, ...detail });
+});
+
+// Deactivating signs the customer out everywhere and blocks sign-in; their
+// orders and history stay intact.
+router.patch('/customers/:id/status', requirePermission('users:deactivate'), async (req, res) => {
+  if (!isUuid(req.params.id) || typeof req.body?.isActive !== 'boolean') return res.status(400).json({ success: false, message: 'Invalid request' });
+  const detail = await getCustomerDetail(req.params.id);
+  if (!detail) return res.status(404).json({ success: false, message: 'Customer not found' });
+  const isActive = req.body.isActive;
+  await setUserActive(req.params.id, isActive);
+  if (!isActive) await revokeAllSessionsForUser(req.params.id);
+  await logAudit({
+    actorId: req.user.id, actorName: req.user.name, action: isActive ? 'CUSTOMER_REACTIVATED' : 'CUSTOMER_DEACTIVATED',
+    entity: 'User', entityId: req.params.id, previousValue: detail.customer.isActive ? 'Active' : 'Inactive', newValue: isActive ? 'Active' : 'Inactive', ip: req.ip
+  });
+  res.json({ success: true, isActive });
+});
+
+// Finance dashboard: revenue, COGS, expenses and profit for a date range.
+router.get('/finance/overview', requirePermission('reports:read'), async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({ success: true, ...(await getFinanceOverview(req.query)) });
+});
+
+// Expenses (admin only — individual records include salaries).
+const expenseSchema = z.object({
+  spentOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Choose the date of the expense')
+    .refine((d) => !Number.isNaN(new Date(`${d}T00:00:00+03:00`).getTime()), 'Choose a valid date')
+    .refine((d) => d <= new Date(Date.now() + 86400000).toLocaleDateString('en-CA', { timeZone: 'Africa/Nairobi' }), 'The date cannot be in the future'),
+  category: z.enum(EXPENSE_CATEGORIES, { message: 'Choose a category' }),
+  description: z.string().trim().min(2, 'Describe the expense').max(300),
+  amount: z.coerce.number({ message: 'Enter the amount' }).positive('The amount must be greater than zero').max(1e9),
+  paymentMethod: z.string().trim().max(60).optional().nullable(),
+  reference: z.string().trim().max(100).optional().nullable()
+});
+
+router.get('/expenses', requirePermission('expenses:read'), async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({ success: true, categories: EXPENSE_CATEGORIES, ...(await listExpenses(req.query)) });
+});
+
+router.post('/expenses', requirePermission('expenses:write'), async (req, res) => {
+  const parsed = expenseSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ success: false, message: formatZodError(parsed.error) });
+  const expense = await createExpense({ ...parsed.data, paymentMethod: parsed.data.paymentMethod || null, reference: parsed.data.reference || null }, req.user.id);
+  await logAudit({ actorId: req.user.id, actorName: req.user.name, action: 'EXPENSE_CREATE', entity: 'Expense', entityId: expense.id, newValue: `${expense.category}: KES ${expense.amount} (${expense.spentOn})`, ip: req.ip });
+  res.status(201).json({ success: true, expense });
+});
+
+router.put('/expenses/:id', requirePermission('expenses:write'), async (req, res) => {
+  if (!isUuid(req.params.id)) return res.status(404).json({ success: false, message: 'Expense not found' });
+  const existing = await findExpense(req.params.id);
+  if (!existing) return res.status(404).json({ success: false, message: 'Expense not found' });
+  const parsed = expenseSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ success: false, message: formatZodError(parsed.error) });
+  const expense = await updateExpense(existing.id, { ...parsed.data, paymentMethod: parsed.data.paymentMethod || null, reference: parsed.data.reference || null });
+  await logAudit({
+    actorId: req.user.id, actorName: req.user.name, action: 'EXPENSE_UPDATE', entity: 'Expense', entityId: expense.id,
+    previousValue: `${existing.category}: KES ${existing.amount} (${existing.spentOn})`, newValue: `${expense.category}: KES ${expense.amount} (${expense.spentOn})`, ip: req.ip
+  });
+  res.json({ success: true, expense });
+});
+
+router.delete('/expenses/:id', requirePermission('expenses:write'), async (req, res) => {
+  if (!isUuid(req.params.id)) return res.status(404).json({ success: false, message: 'Expense not found' });
+  const deleted = await deleteExpense(req.params.id);
+  if (!deleted) return res.status(404).json({ success: false, message: 'Expense not found' });
+  await logAudit({ actorId: req.user.id, actorName: req.user.name, action: 'EXPENSE_DELETE', entity: 'Expense', entityId: deleted.id, previousValue: `${deleted.category}: KES ${deleted.amount} (${deleted.spentOn})`, ip: req.ip });
+  res.json({ success: true });
 });
 
 // 2. Audit Logs

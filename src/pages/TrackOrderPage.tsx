@@ -92,7 +92,7 @@ export const TrackOrderPage: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen flex flex-col bg-slate-950 text-slate-100 selection:bg-cyan-600 selection:text-white">
+    <div className="min-h-dvh flex flex-col bg-slate-950 text-slate-100 selection:bg-cyan-600 selection:text-white">
       <Header currentPath="/track-order" />
 
       {/* Hero Header */}

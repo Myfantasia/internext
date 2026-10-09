@@ -29,7 +29,7 @@ export const RequireRole: React.FC<RequireRoleProps> = ({ allow, children, admin
   // Loading state
   if (isLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-950">
+      <div className="min-h-dvh flex items-center justify-center bg-slate-950">
         <div className="text-center space-y-3">
           <div className="w-10 h-10 border-2 border-cyan-500 border-t-transparent rounded-full animate-spin mx-auto" />
           <p className="text-sm text-slate-400">Loading your account…</p>
@@ -58,7 +58,7 @@ export const RequireRole: React.FC<RequireRoleProps> = ({ allow, children, admin
         : 'My Account';
 
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center bg-slate-950 text-slate-100 px-4 py-12">
+      <div className="min-h-dvh flex flex-col items-center justify-center bg-slate-950 text-slate-100 px-4 py-12">
         <div className="max-w-md w-full text-center space-y-6">
           {/* Icon */}
           <div className="w-20 h-20 rounded-3xl bg-rose-950/60 border border-rose-700/50 text-rose-400 mx-auto flex items-center justify-center">

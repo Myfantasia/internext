@@ -15,7 +15,7 @@ export const WishlistPage: React.FC = () => {
   const { formatPrice } = useStore();
 
   return (
-    <div className="min-h-screen flex flex-col bg-slate-950 text-slate-100 selection:bg-cyan-600 selection:text-white">
+    <div className="min-h-dvh flex flex-col bg-slate-950 text-slate-100 selection:bg-cyan-600 selection:text-white">
       <Header currentPath="/wishlist" />
 
       <div className="bg-[#070b18] border-b border-slate-800 py-8 px-3 sm:px-4 lg:px-5">

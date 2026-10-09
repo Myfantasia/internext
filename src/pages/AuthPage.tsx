@@ -157,7 +157,7 @@ export const AuthPage: React.FC = () => {
   const iconInput = 'field-input pl-10';
 
   return (
-    <div className="min-h-screen flex flex-col bg-slate-950 text-slate-100">
+    <div className="min-h-dvh flex flex-col bg-slate-950 text-slate-100">
       <Header currentPath="/auth" />
 
       <main className="flex-1 w-full px-4 py-8 sm:py-12">

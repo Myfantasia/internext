@@ -98,7 +98,7 @@ export const OrderConfirmationPage: React.FC = () => {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex flex-col bg-slate-950"><Header currentPath="/order-confirmation" />
+      <div className="min-h-dvh flex flex-col bg-slate-950"><Header currentPath="/order-confirmation" />
         <main className="flex-1 grid place-items-center"><Loader2 className="w-8 h-8 animate-spin text-cyan-400" aria-label="Loading order" /></main>
       </div>
     );
@@ -106,7 +106,7 @@ export const OrderConfirmationPage: React.FC = () => {
 
   if (notFound || !order) {
     return (
-      <div className="min-h-screen flex flex-col bg-slate-950 text-slate-100"><Header currentPath="/order-confirmation" />
+      <div className="min-h-dvh flex flex-col bg-slate-950 text-slate-100"><Header currentPath="/order-confirmation" />
         <main className="flex-1 grid place-items-center p-6 text-center">
           <div className="space-y-3 max-w-sm">
             <AlertCircle className="w-10 h-10 mx-auto text-amber-400" aria-hidden="true" />
@@ -137,7 +137,7 @@ export const OrderConfirmationPage: React.FC = () => {
   const isPickup = order.deliveryAddress?.pickup || order.deliveryQuote?.kind === 'pickup';
 
   return (
-    <div className="min-h-screen flex flex-col bg-slate-950 text-slate-100">
+    <div className="min-h-dvh flex flex-col bg-slate-950 text-slate-100">
       <Header currentPath="/order-confirmation" />
 
       <main className="flex-1 max-w-4xl mx-auto px-4 py-8 sm:py-12 w-full space-y-6">

@@ -42,7 +42,7 @@ export const AcceptInvitePage: React.FC = () => {
 
   if (!token) {
     return (
-      <div className="min-h-screen flex flex-col bg-slate-950 text-slate-100">
+      <div className="min-h-dvh flex flex-col bg-slate-950 text-slate-100">
         <Header currentPath="/auth/accept-invite" />
         <main className="flex-1 max-w-md mx-auto px-4 py-12 w-full flex flex-col justify-center text-center text-sm text-slate-400">
           Missing or invalid invitation link. Ask your administrator to resend the invite.
@@ -53,7 +53,7 @@ export const AcceptInvitePage: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen flex flex-col bg-slate-950 text-slate-100">
+    <div className="min-h-dvh flex flex-col bg-slate-950 text-slate-100">
       <Header currentPath="/auth/accept-invite" />
       <main className="flex-1 max-w-md mx-auto px-4 py-12 w-full flex flex-col justify-center">
         <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8 shadow-2xl space-y-6">

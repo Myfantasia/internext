@@ -172,7 +172,7 @@ export const AdminReferralRewards: React.FC = () => {
             </div>
 
             <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 min-[420px]:grid-cols-2 gap-3">
                 <Field label="Reward value type" htmlFor="r-vt">
                   <select id="r-vt" value={form.valueType} onChange={(e) => setForm({ ...form, valueType: e.target.value as any })} className="field-input"><option value="percentage">Percentage off</option><option value="fixed">Fixed amount (KES)</option></select>
                 </Field>
@@ -201,7 +201,7 @@ export const AdminReferralRewards: React.FC = () => {
                 </div>
               )}
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 min-[420px]:grid-cols-2 gap-3">
                 <Field label="Min order (KES)" htmlFor="r-min"><input id="r-min" type="number" min="0" value={form.minOrderAmount} onChange={(e) => setForm({ ...form, minOrderAmount: Number(e.target.value) })} className="field-input" /></Field>
                 <Field label="Max discount (KES)" htmlFor="r-cap" hint="Caps % rewards."><input id="r-cap" type="number" min="1" value={form.maxDiscountAmount} onChange={(e) => setForm({ ...form, maxDiscountAmount: e.target.value === '' ? '' : Number(e.target.value) })} className="field-input" placeholder="No cap" /></Field>
                 <Field label="Code valid for (days)" htmlFor="r-days"><input id="r-days" type="number" min="1" max="365" value={form.couponValidDays} onChange={(e) => setForm({ ...form, couponValidDays: Number(e.target.value) })} className="field-input" /></Field>

@@ -51,7 +51,7 @@ export const StaffSignupPage: React.FC = () => {
     navigate('/admin/login?registered=1');
   };
 
-  return <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col">
+  return <div className="min-h-dvh bg-slate-950 text-slate-100 flex flex-col">
     <header className="border-b border-slate-800 bg-slate-900 px-4 py-4 flex items-center justify-between">
       <a href="/" className="font-bold text-white">Internext Business System</a>
       <a href="/admin/login" className="text-sm text-cyan-400 hover:text-cyan-300">Staff sign in</a>

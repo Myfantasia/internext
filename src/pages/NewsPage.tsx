@@ -101,7 +101,7 @@ export const NewsPage: React.FC = () => {
   const [lead, ...rest] = articles;
 
   return (
-    <div className="min-h-screen flex flex-col bg-slate-950 text-slate-100">
+    <div className="min-h-dvh flex flex-col bg-slate-950 text-slate-100">
       <Header currentPath="/news" />
       <section className="aurora-bg border-b border-slate-800 px-4 py-10 sm:py-14">
         <div className="max-w-[1320px] mx-auto space-y-3">

@@ -5,7 +5,7 @@ import { Footer } from '../components/layout/Footer';
 
 export const NotFoundPage: React.FC = () => {
   return (
-    <div className="min-h-screen flex flex-col bg-slate-950 text-slate-100">
+    <div className="min-h-dvh flex flex-col bg-slate-950 text-slate-100">
       <Header currentPath="/404" />
 
       <main className="flex-1 flex flex-col items-center justify-center px-4 py-20 text-center">

@@ -18,7 +18,7 @@ export const NewsArticlePage: React.FC = () => {
   }, [slug]);
 
   return (
-    <div className="min-h-screen flex flex-col bg-slate-950 text-slate-100">
+    <div className="min-h-dvh flex flex-col bg-slate-950 text-slate-100">
       <Header currentPath="/news" />
       <main className="flex-1 w-full max-w-3xl mx-auto px-4 py-8 sm:py-12">
         <a href="/news" className="inline-flex items-center gap-1.5 text-sm text-cyan-400 hover:underline mb-6"><ArrowLeft className="w-4 h-4" aria-hidden="true" />All news & guides</a>

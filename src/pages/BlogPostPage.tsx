@@ -47,7 +47,7 @@ export const BlogPostPage: React.FC = () => {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex flex-col bg-slate-950 text-slate-100">
+      <div className="min-h-dvh flex flex-col bg-slate-950 text-slate-100">
         <Header currentPath="/blog" />
         <div className="flex-1 flex items-center justify-center p-20">
           <div className="w-8 h-8 border-4 border-cyan-400 border-t-transparent rounded-full animate-spin" />
@@ -59,7 +59,7 @@ export const BlogPostPage: React.FC = () => {
 
   if (!post) {
     return (
-      <div className="min-h-screen flex flex-col bg-slate-950 text-slate-100">
+      <div className="min-h-dvh flex flex-col bg-slate-950 text-slate-100">
         <Header currentPath="/blog" />
         <div className="flex-1 flex items-center justify-center p-20 text-center">
           <div>
@@ -75,7 +75,7 @@ export const BlogPostPage: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen flex flex-col bg-slate-950 text-slate-100 selection:bg-cyan-600 selection:text-white">
+    <div className="min-h-dvh flex flex-col bg-slate-950 text-slate-100 selection:bg-cyan-600 selection:text-white">
       <Header currentPath="/blog" />
 
       {/* Breadcrumb Header */}

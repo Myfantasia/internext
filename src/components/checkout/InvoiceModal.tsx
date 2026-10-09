@@ -26,27 +26,27 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = ({ order, onClose }) =>
     <div className="print-overlay fixed inset-0 z-[60] flex items-start sm:items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md animate-in fade-in duration-200 overflow-y-auto overscroll-contain">
       <div className="bg-white text-slate-900 rounded-3xl max-w-2xl w-full p-6 sm:p-8 shadow-2xl relative my-8 print:m-0 print:p-0 print:shadow-none print:w-full print:max-w-none">
         {/* Top Action Bar (hidden on print) */}
-        <div className="flex items-center justify-between pb-6 border-b border-slate-200 print:hidden">
+        <div className="flex flex-wrap items-center justify-between gap-3 pb-6 border-b border-slate-200 print:hidden">
           <div className="flex items-center gap-2 font-bold text-slate-700 text-xs uppercase tracking-wider">
             <span>Official Tax Invoice</span>
             <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px]">{order.paymentStatus}</span>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             {order.paymentStatus === 'Paid' && (
               <a href={`/api/orders/${order.id}/receipt.pdf`} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition-colors">
                 <ReceiptText className="w-4 h-4" />
-                <span>Payment Receipt</span>
+                <span>Receipt<span className="hidden sm:inline"> PDF</span></span>
               </a>
             )}
             <a href={`/api/orders/${order.id}/invoice.pdf`} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold transition-colors">
               <Download className="w-4 h-4" />
-              <span>Official PDF Invoice</span>
+              <span><span className="hidden sm:inline">Official </span>PDF Invoice</span>
             </a>
             <button type="button" onClick={handlePrint} className="flex items-center gap-1.5 px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold transition-colors">
               <Printer className="w-4 h-4" />
               <span>Print</span>
             </button>
-            <button type="button" onClick={onClose} className="p-2 text-slate-400 hover:text-slate-900 rounded-lg">
+            <button type="button" onClick={onClose} className="p-2 text-slate-400 hover:text-slate-900 rounded-lg" aria-label="Close invoice">
               <X className="w-5 h-5" />
             </button>
           </div>
@@ -55,7 +55,7 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = ({ order, onClose }) =>
         {/* Invoice Printable Area */}
         <div className="pt-6 space-y-6 text-xs">
           {/* Header & Logo */}
-          <div className="flex justify-between items-start">
+          <div className="flex flex-col sm:flex-row justify-between items-start gap-4">
             <div>
               <div className="flex items-center gap-2 text-slate-950">
                 <div className="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center text-white font-black text-sm">
@@ -69,7 +69,7 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = ({ order, onClose }) =>
               </div>
             </div>
 
-            <div className="text-right">
+            <div className="sm:text-right">
               <div className="text-base font-black text-blue-600 font-mono">{order.orderNumber}</div>
               <div className="text-[11px] text-slate-500 mt-0.5">
                 Date: {new Date(order.createdAt).toLocaleDateString()}
@@ -81,7 +81,7 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = ({ order, onClose }) =>
           </div>
 
           {/* Billed To / Shipping Address */}
-          <div className="grid grid-cols-2 gap-4 p-4 rounded-2xl bg-slate-50 border border-slate-200">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 p-4 rounded-2xl bg-slate-50 border border-slate-200">
             <div>
               <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">
                 Billed / Delivered To:

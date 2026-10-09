@@ -249,7 +249,7 @@ export const CheckoutPage: React.FC = () => {
 
   if (cart.length === 0 && !mpesaOrder) {
     return (
-      <div className="min-h-screen flex flex-col bg-slate-950 text-slate-100">
+      <div className="min-h-dvh flex flex-col bg-slate-950 text-slate-100">
         <Header currentPath="/checkout" />
         <main className="flex-1 grid place-items-center p-8 text-center">
           <div className="space-y-4 max-w-sm">
@@ -333,7 +333,7 @@ export const CheckoutPage: React.FC = () => {
   );
 
   return (
-    <div className="min-h-screen flex flex-col bg-slate-950 text-slate-100">
+    <div className="min-h-dvh flex flex-col bg-slate-950 text-slate-100">
       <Header currentPath="/checkout" />
 
       {/* Stepper */}

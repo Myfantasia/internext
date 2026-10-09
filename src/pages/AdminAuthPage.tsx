@@ -64,7 +64,7 @@ export const AdminAuthPage: React.FC = () => {
     'w-full bg-slate-950 border border-slate-700 rounded-xl pl-11 pr-11 py-3.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 transition-all';
 
   return (
-    <div className="min-h-screen flex flex-col bg-slate-950 text-slate-100 selection:bg-amber-600 selection:text-white">
+    <div className="min-h-dvh flex flex-col bg-slate-950 text-slate-100 selection:bg-amber-600 selection:text-white">
       {/* Minimal top bar */}
       <header className="bg-[#070b18] border-b border-slate-800 px-4 py-3 flex items-center justify-between">
         <a href="/" className="flex items-center gap-2 text-slate-300 hover:text-white transition-colors">

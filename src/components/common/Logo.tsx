@@ -33,16 +33,18 @@ interface LogoProps {
   className?: string;
   titleClassName?: string;
   taglineClassName?: string;
+  /** Extra classes for the wordmark, e.g. to hide it on narrow screens. */
+  textClassName?: string;
 }
 
-export const Logo: React.FC<LogoProps> = ({ variant = 'full', size = 36, className = '', titleClassName = 'text-white', taglineClassName = 'text-cyan-400' }) => {
+export const Logo: React.FC<LogoProps> = ({ variant = 'full', size = 36, className = '', titleClassName = 'text-white', taglineClassName = 'text-cyan-400', textClassName = '' }) => {
   if (variant === 'mark') {
     return <LogoMark size={size} className={className} />;
   }
   return (
     <div className={`flex items-center gap-2.5 ${className}`}>
       <LogoMark size={size} />
-      <div>
+      <div className={textClassName}>
         <div className={`font-black leading-tight tracking-tight ${titleClassName}`} style={{ fontSize: size * 0.42 }}>
           INTERNEXT
         </div>

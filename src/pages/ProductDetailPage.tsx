@@ -122,7 +122,7 @@ export const ProductDetailPage: React.FC = () => {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex flex-col bg-slate-950 text-slate-100">
+      <div className="min-h-dvh flex flex-col bg-slate-950 text-slate-100">
         <Header currentPath="/products" />
         <div className="flex-1 flex items-center justify-center p-20">
           <div className="flex flex-col items-center gap-3 text-cyan-400">
@@ -137,7 +137,7 @@ export const ProductDetailPage: React.FC = () => {
 
   if (!product) {
     return (
-      <div className="min-h-screen flex flex-col bg-slate-950 text-slate-100">
+      <div className="min-h-dvh flex flex-col bg-slate-950 text-slate-100">
         <Header currentPath="/products" />
         <div className="flex-1 flex flex-col items-center justify-center p-20 text-center space-y-4">
           <h2 className="text-2xl font-bold text-white">Product Not Found</h2>
@@ -196,7 +196,7 @@ export const ProductDetailPage: React.FC = () => {
   )}`;
 
   return (
-    <div className="min-h-screen flex flex-col bg-slate-950 text-slate-100 selection:bg-cyan-600 selection:text-white">
+    <div className="min-h-dvh flex flex-col bg-slate-950 text-slate-100 selection:bg-cyan-600 selection:text-white">
       <Header currentPath="/products" />
 
       {/* Breadcrumb Bar */}

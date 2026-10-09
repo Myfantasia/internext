@@ -155,7 +155,7 @@ export const AdminCoupons: React.FC = () => {
                 </div>
               </Field>
               <Field label="Description" htmlFor="c-desc" hint="Shown to the customer when the code is applied."><input id="c-desc" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} className="field-input" maxLength={500} /></Field>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 min-[420px]:grid-cols-2 gap-3">
                 <Field label="Discount type" htmlFor="c-type"><select id="c-type" value={form.discountType} onChange={(e) => setForm({ ...form, discountType: e.target.value as any })} className="field-input"><option value="percentage">Percentage</option><option value="fixed">Fixed (KES)</option></select></Field>
                 <Field label={form.discountType === 'percentage' ? 'Discount (%)' : 'Discount (KES)'} htmlFor="c-val" required><input id="c-val" type="number" min="0.01" step="0.01" max={form.discountType === 'percentage' ? 100 : undefined} value={form.discountValue} onChange={(e) => setForm({ ...form, discountValue: Number(e.target.value) })} className="field-input" required /></Field>
                 <Field label="Minimum order (KES)" htmlFor="c-min"><input id="c-min" type="number" min="0" value={form.minOrderAmount} onChange={(e) => setForm({ ...form, minOrderAmount: Number(e.target.value) })} className="field-input" /></Field>

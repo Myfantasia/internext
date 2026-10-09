@@ -53,7 +53,7 @@ export const QuickViewModal: React.FC<QuickViewModalProps> = ({ product, onClose
   return (
     <Portal>
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="bg-slate-900 border border-slate-700/80 rounded-3xl max-w-4xl w-full max-h-[90vh] overflow-y-auto shadow-2xl relative">
+      <div className="bg-slate-900 border border-slate-700/80 rounded-3xl max-w-4xl w-full max-h-[90dvh] overflow-y-auto shadow-2xl relative">
         {/* Close Button */}
         <button
           type="button"

@@ -189,9 +189,9 @@ export const Header: React.FC<HeaderProps> = ({ currentPath = '/' }) => {
 
       {/* 2. MAIN HEADER BAR */}
       <div className={`bg-[#0b132b] border-b border-slate-800 transition-shadow duration-200 ${isScrolled ? 'shadow-xl' : ''}`}>
-        <div className="max-w-[1520px] mx-auto px-3 sm:px-4 lg:px-5 py-3 flex items-center justify-between gap-4 md:gap-6">
+        <div className="max-w-[1520px] mx-auto px-3 sm:px-4 lg:px-5 py-3 flex items-center justify-between gap-2 sm:gap-4 md:gap-6">
           {/* Logo */}
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0">
             <button
               type="button"
               onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
@@ -201,7 +201,7 @@ export const Header: React.FC<HeaderProps> = ({ currentPath = '/' }) => {
             </button>
 
             <a href="/" className="group">
-              <Logo size={38} className="group-hover:scale-[1.02] transition-transform" />
+              <Logo size={38} className="group-hover:scale-[1.02] transition-transform" textClassName="hidden sm:block" />
             </a>
           </div>
 
@@ -211,12 +211,12 @@ export const Header: React.FC<HeaderProps> = ({ currentPath = '/' }) => {
           </div>
 
           {/* Right Action Icons: Compare, Wishlist, Cart, Account */}
-          <div className="flex items-center gap-2 sm:gap-4">
-            {/* Quick Theme Switcher */}
+          <div className="flex items-center gap-1 sm:gap-4 shrink-0">
+            {/* Quick Theme Switcher (phones use the one in the menu) */}
             <button
               type="button"
               onClick={toggleTheme}
-              className="p-2.5 text-slate-300 hover:text-cyan-400 hover:bg-slate-800/80 rounded-xl transition-all flex items-center justify-center group cursor-pointer"
+              className="hidden sm:flex p-2.5 text-slate-300 hover:text-cyan-400 hover:bg-slate-800/80 rounded-xl transition-all items-center justify-center group cursor-pointer"
               title={`Switch to ${theme === 'dark' ? 'Light' : 'Dark'} Mode`}
             >
               {theme === 'dark' ? (
@@ -230,7 +230,7 @@ export const Header: React.FC<HeaderProps> = ({ currentPath = '/' }) => {
             <button
               type="button"
               onClick={() => setIsCompareDrawerOpen(true)}
-              className="relative p-2.5 text-slate-300 hover:text-cyan-400 hover:bg-slate-800/80 rounded-xl transition-all flex items-center gap-1.5 group"
+              className="relative p-2 sm:p-2.5 text-slate-300 hover:text-cyan-400 hover:bg-slate-800/80 rounded-xl transition-all flex items-center gap-1.5 group"
               title="Compare Products"
             >
               <Scale className="w-5 h-5 group-hover:scale-110 transition-transform" />
@@ -245,7 +245,7 @@ export const Header: React.FC<HeaderProps> = ({ currentPath = '/' }) => {
             {/* Wishlist Button */}
             <a
               href="/wishlist"
-              className="relative p-2.5 text-slate-300 hover:text-rose-400 hover:bg-slate-800/80 rounded-xl transition-all flex items-center gap-1.5 group"
+              className="relative p-2 sm:p-2.5 text-slate-300 hover:text-rose-400 hover:bg-slate-800/80 rounded-xl transition-all flex items-center gap-1.5 group"
               title="Saved Wishlist"
             >
               <Heart className="w-5 h-5 group-hover:scale-110 transition-transform" />

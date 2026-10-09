@@ -12,7 +12,7 @@ import {
 // holds the definitions). Charts and KPIs follow the selected date range.
 
 interface Totals {
-  revenue: number; orders: number; averageOrder: number; refunds: number; refundCount: number; vat: number; netRevenue: number;
+  revenue: number; amountPaid: number; orders: number; averageOrder: number; refunds: number; refundCount: number; vat: number; netRevenue: number;
   cogs: number; cogsCoverage: number | null; grossProfit: number; grossMargin: number | null; expenses: number; netProfit: number; profitMargin: number | null;
 }
 interface Bucket { bucket: string; revenue: number; orders: number; vat: number; refunds: number; cogs: number; expenses: number; netRevenue: number; grossProfit: number; netProfit: number; profitMargin: number | null }
@@ -58,7 +58,7 @@ function presetRange(key: string) {
 
 export const AdminFinance: React.FC<{ onNavigate?: (tab: string, params?: Record<string, string>) => void }> = () => {
   const { can } = useAuth();
-  const [view, setView] = useState<'overview' | 'expenses'>('overview');
+  const [view, setView] = useState<'overview' | 'expenses' | 'channels'>('overview');
   const [preset, setPreset] = useState('30d');
   const [range, setRange] = useState(() => presetRange('30d'));
 
@@ -69,8 +69,10 @@ export const AdminFinance: React.FC<{ onNavigate?: (tab: string, params?: Record
       <div className="card p-3 flex flex-col lg:flex-row lg:items-center gap-3">
         {can('expenses:read') && (
           <div className="flex gap-1 rounded-xl bg-slate-950 p-1 border border-slate-800 self-start" role="tablist" aria-label="Finance view">
-            {(['overview', 'expenses'] as const).map((v) => (
-              <button key={v} type="button" role="tab" aria-selected={view === v} onClick={() => setView(v)} className={`btn btn-sm ${view === v ? 'btn-primary' : 'btn-ghost'}`}>{v === 'overview' ? 'Overview' : 'Expenses'}</button>
+            {(['overview', 'channels', 'expenses'] as const).map((v) => (
+              <button key={v} type="button" role="tab" aria-selected={view === v} onClick={() => setView(v)} className={`btn btn-sm ${view === v ? 'btn-primary' : 'btn-ghost'}`}>
+                {v === 'overview' ? 'Overview' : v === 'channels' ? 'Online vs POS' : 'Expenses'}
+              </button>
             ))}
           </div>
         )}
@@ -84,7 +86,72 @@ export const AdminFinance: React.FC<{ onNavigate?: (tab: string, params?: Record
         </div>
       </div>
 
-      {view === 'overview' ? <FinanceOverview range={range} /> : <ExpensesPanel range={range} />}
+      {view === 'overview' ? <FinanceOverview range={range} /> : view === 'channels' ? <ChannelSplit range={range} /> : <ExpensesPanel range={range} />}
+    </div>
+  );
+};
+
+// ---------------------------------------------------------------------------
+// Channel split: Online vs POS revenue comparison
+// ---------------------------------------------------------------------------
+interface ChannelTotals { online: Totals; pos: Totals }
+
+const ChannelSplit: React.FC<{ range: { from: string; to: string } }> = ({ range }) => {
+  const [data, setData] = useState<ChannelTotals | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  const load = useCallback(async () => {
+    setLoading(true); setError('');
+    try { setData(await api<ChannelTotals>(`/api/admin/finance/channel-split?${new URLSearchParams(range)}`)); }
+    catch (e: any) { setError(e.message || 'Could not load channel data'); }
+    finally { setLoading(false); }
+  }, [range]);
+  useEffect(() => { load(); }, [load]);
+
+  if (error) return <ErrorState message={error} onRetry={load} />;
+  if (!data) return <LoadingBlock label="Calculating channel figures…" />;
+
+  const { online, pos } = data;
+  const totalRevenue = online.revenue + pos.revenue;
+  const onlinePct = totalRevenue > 0 ? (online.revenue / totalRevenue) * 100 : 0;
+  const posPct = totalRevenue > 0 ? (pos.revenue / totalRevenue) * 100 : 0;
+
+  return (
+    <div className={`space-y-6 transition-opacity ${loading ? 'opacity-60' : ''}`}>
+      {/* Split bar */}
+      <section className="card card-pad space-y-3" aria-labelledby="split-h">
+        <h3 id="split-h" className="text-base font-bold text-white">Revenue by channel</h3>
+        <p className="text-xs text-slate-400">{range.from} to {range.to}</p>
+        <div className="flex rounded-xl overflow-hidden h-5">
+          <div className="bg-cyan-600 transition-all" style={{ width: `${onlinePct}%` }} title={`Online ${onlinePct.toFixed(1)}%`} />
+          <div className="bg-violet-600 transition-all" style={{ width: `${posPct}%` }} title={`POS ${posPct.toFixed(1)}%`} />
+        </div>
+        <div className="flex gap-4 text-xs">
+          <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-cyan-600 shrink-0" />Online — {onlinePct.toFixed(1)}%</span>
+          <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-violet-600 shrink-0" />POS (In-Store) — {posPct.toFixed(1)}%</span>
+        </div>
+      </section>
+
+      {/* Side-by-side comparison */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {([['Online', online, 'cyan'] as const, ['POS (In-Store)', pos, 'violet'] as const]).map(([label, ch, color]) => (
+          <section key={label} className={`card card-pad space-y-4 border-t-2 ${color === 'cyan' ? 'border-t-cyan-600' : 'border-t-violet-600'}`}>
+            <h3 className="text-sm font-black text-white uppercase tracking-wider">{label}</h3>
+            <div className="grid grid-cols-2 gap-3">
+              <StatTile label="Revenue" value={kesCompact(ch.revenue)} hint="Booked revenue" />
+              <StatTile label="Cash collected" value={kesCompact(ch.amountPaid)} hint="Amount actually paid" />
+              <StatTile label="Orders" value={ch.orders.toLocaleString()} hint={`Avg ${kesCompact(ch.averageOrder)}`} />
+              <StatTile label="Net revenue" value={kesCompact(ch.netRevenue)} hint="After refunds & VAT" />
+              <StatTile label="COGS" value={kesCompact(ch.cogs)} invert />
+              <StatTile label="Gross profit" value={kesCompact(ch.grossProfit)} hint={ch.grossMargin != null ? `${pct(ch.grossMargin)} margin` : undefined} />
+              <StatTile label="Net profit" value={kesCompact(ch.netProfit)} tone={ch.netProfit < 0 ? 'danger' : 'default'} />
+              <StatTile label="Profit margin" value={pct(ch.profitMargin)} />
+            </div>
+          </section>
+        ))}
+      </div>
+      <button type="button" onClick={load} disabled={loading} className="btn btn-ghost btn-sm"><RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />Refresh</button>
     </div>
   );
 };

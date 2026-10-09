@@ -24,7 +24,8 @@ import {
   Truck,
   CreditCard,
   UserCircle,
-  LineChart
+  LineChart,
+  ShoppingBag
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
@@ -71,6 +72,7 @@ const NAV_GROUPS: NavGroup[] = [
     label: 'Sales',
     items: [
       { id: 'orders', label: 'Orders', icon: ShoppingCart },
+      { id: 'pos', label: 'Point of Sale', icon: ShoppingBag, permission: 'orders:write' },
       { id: 'payments', label: 'Payments', icon: CreditCard, permission: 'payments:read' },
       { id: 'finance', label: 'Finance', icon: LineChart, permission: 'reports:read' },
       { id: 'delivery', label: 'Delivery Pricing', icon: Truck, permission: 'delivery:read' },

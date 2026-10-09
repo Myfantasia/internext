@@ -579,9 +579,9 @@ export const ProductDetailPage: React.FC = () => {
                       <h3 className="px-4 py-2.5 bg-slate-950 text-xs font-extrabold text-cyan-400 uppercase tracking-wider">{section}</h3>
                       <dl className="divide-y divide-slate-800">
                         {Object.entries(attrs).map(([k, v]) => (
-                          <div key={k} className="grid grid-cols-5 gap-3 px-4 py-2.5 text-sm">
-                            <dt className="col-span-2 text-slate-400">{k}</dt>
-                            <dd className="col-span-3 text-white font-medium break-words">{v}</dd>
+                          <div key={k} className="grid grid-cols-1 sm:grid-cols-5 gap-1 sm:gap-3 px-4 py-2.5 text-sm">
+                            <dt className="sm:col-span-2 text-slate-400">{k}</dt>
+                            <dd className="sm:col-span-3 text-white font-medium break-words">{v}</dd>
                           </div>
                         ))}
                       </dl>

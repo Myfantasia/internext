@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { db } from '../db/client.js';
 import {
   createOrder, findOrderByIdentifier, findOrdersForUser, findOrdersForCustomerOrPhone, listOrdersPage,
-  updateOrderStatus, cancelUnpaidOrder, canAccessOrder, priceCart, OrderError, PAYMENT_METHODS, CASH_ON_DELIVERY_MAX_KM
+  updateOrderStatus, cancelUnpaidOrder, canAccessOrder, priceCart, OrderError, PAYMENT_METHODS, CASH_ON_DELIVERY_MAX_KM, markOrderRefunded
 } from '../repositories/ordersRepo.js';
 import { logAudit } from '../repositories/auditLogsRepo.js';
 import { sendOrderConfirmationEmail, sendOrderStatusUpdateEmail } from '../services/email/index.js';
@@ -251,6 +251,41 @@ router.put('/:id/status', requirePermission('orders:update_status'), async (req,
   }
 
   res.json({ success: true, order: result.order });
+});
+
+// 8. Admin/Sales Manager: process a refund.
+const refundSchema = z.object({
+  amount: z.number().positive().optional(),
+  restock: z.boolean().default(false),
+  reason: z.string().trim().max(500).optional(),
+  reference: z.string().trim().max(100).optional()
+});
+
+router.post('/:id/refund', requirePermission('orders:write'), async (req, res) => {
+  const parsed = refundSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ success: false, message: formatZodError(parsed.error) });
+
+  const { amount, restock, reason, reference } = parsed.data;
+
+  try {
+    const updated = await markOrderRefunded(req.params.id, {
+      reference,
+      note: reason,
+      restock,
+      amount,
+      changedByUserId: req.user.id
+    });
+    if (!updated) return res.status(404).json({ success: false, message: 'Order not found or already refunded' });
+
+    await logAudit({
+      actorId: req.user.id, actorName: req.user.name, action: 'ORDER_REFUNDED', entity: 'Order',
+      entityId: updated.id, newValue: `Refunded KES ${amount || 'Full amount'}`, ip: req.ip
+    });
+
+    res.json({ success: true, order: updated });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
 });
 
 export default router;

@@ -43,6 +43,13 @@
       "when": 1791455297175,
       "tag": "0005_thankful_bastion",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1791534934888,
+      "tag": "0006_overconfident_maximus",
+      "breakpoints": true
     }
   ]
 }

@@ -28,8 +28,8 @@ export const AdminNewsletter: React.FC = () => {
         <p className="text-xs text-slate-400">Emails collected from the storefront footer and campaign forms</p>
       </div>
 
-      <div className="bg-slate-900 border border-slate-800 rounded-3xl overflow-hidden">
-        <table className="w-full text-left text-xs">
+      <div className="bg-slate-900 border border-slate-800 rounded-3xl overflow-x-auto">
+        <table className="w-full min-w-[36rem] text-left text-xs">
           <thead className="bg-slate-950/80 text-slate-400 font-bold border-b border-slate-800">
             <tr>
               <th className="p-3.5">Email</th>

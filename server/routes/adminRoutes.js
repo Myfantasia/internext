@@ -20,6 +20,10 @@ import { listExpenses, findExpense, createExpense, updateExpense, deleteExpense 
 import { EXPENSE_CATEGORIES } from '../db/schema.js';
 import { setUserActive } from '../repositories/usersRepo.js';
 import { revokeAllSessionsForUser } from '../repositories/sessionsRepo.js';
+import { createPosOrder } from '../repositories/ordersRepo.js';
+import { db } from '../db/client.js';
+import { storeStock, products, productVariants } from '../db/schema.js';
+import { eq, and, sql } from 'drizzle-orm';
 
 const router = express.Router();
 
@@ -173,9 +177,20 @@ router.patch('/customers/:id/status', requirePermission('users:deactivate'), asy
 });
 
 // Finance dashboard: revenue, COGS, expenses and profit for a date range.
+// Supports ?salesChannel=online|pos and ?storeId=<uuid> for sliced views.
 router.get('/finance/overview', requirePermission('reports:read'), async (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   res.json({ success: true, ...(await getFinanceOverview(req.query)) });
+});
+
+// Channel-split summary: returns online vs pos totals for the selected period.
+router.get('/finance/channel-split', requirePermission('reports:read'), async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  const [online, pos] = await Promise.all([
+    getFinanceOverview({ ...req.query, salesChannel: 'online' }),
+    getFinanceOverview({ ...req.query, salesChannel: 'pos' })
+  ]);
+  res.json({ success: true, online: online.current, pos: pos.current });
 });
 
 // Expenses (admin only — individual records include salaries).
@@ -300,6 +315,89 @@ router.post('/newsletter', newsletterLimiter, async (req, res) => {
   }
   await subscribe(parsed.data);
   res.json({ success: true, message: 'Thank you for subscribing to Internext Business System updates!' });
+});
+
+// ---------------------------------------------------------------------------
+// POS System
+// ---------------------------------------------------------------------------
+const posCheckoutSchema = z.object({
+  storeId: z.string().uuid(),
+  customer: z.object({
+    name: z.string().trim().max(100).optional(),
+    email: z.string().trim().email().max(200).optional().or(z.literal('')),
+    phone: z.string().trim().max(30).optional().or(z.literal(''))
+  }).optional(),
+  items: z.array(z.object({
+    productId: z.string().uuid(),
+    variantId: z.string().uuid().nullable().optional(),
+    quantity: z.number().int().positive()
+  })).min(1, 'Cart is empty'),
+  paymentMethod: z.string().min(1).max(60),
+  amountPaid: z.number().min(0),
+  couponCode: z.string().max(30).optional().nullable()
+});
+
+router.post('/pos/checkout', requirePermission('orders:write'), async (req, res) => {
+  try {
+    const parsed = posCheckoutSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ success: false, message: formatZodError(parsed.error) });
+
+    const result = await createPosOrder({
+      ...parsed.data,
+      servedBy: req.user.id,
+      userId: req.body.userId || null // Optional if mapping to existing online account
+    });
+
+    await logAudit({
+      actorId: req.user.id, actorName: req.user.name, action: 'POS_CHECKOUT',
+      entity: 'Order', entityId: result.order.id, newValue: `POS Sale ${result.order.orderNumber} for KES ${result.order.total}`, ip: req.ip
+    });
+
+    res.status(201).json({ success: true, ...result });
+  } catch (err) {
+    const status = err.status || 500;
+    res.status(status).json({ success: false, message: err.message, code: err.code || 'POS_ERROR' });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Store Stock — manage branch-level inventory levels
+// ---------------------------------------------------------------------------
+
+// GET /api/admin/pos/store-stock?storeId=<uuid>  — list stock entries for a branch
+router.get('/pos/store-stock', requirePermission('inventory:read'), async (req, res) => {
+  const { storeId } = req.query;
+  if (!isUuid(String(storeId || ''))) return res.status(400).json({ success: false, message: 'storeId is required' });
+  const rows = await db
+    .select({ id: storeStock.id, storeId: storeStock.storeId, productId: storeStock.productId, variantId: storeStock.variantId, stock: storeStock.stock, updatedAt: storeStock.updatedAt, productName: products.name, variantName: productVariants.name })
+    .from(storeStock)
+    .leftJoin(products, eq(storeStock.productId, products.id))
+    .leftJoin(productVariants, eq(storeStock.variantId, productVariants.id))
+    .where(eq(storeStock.storeId, String(storeId)));
+  res.json({ success: true, stock: rows });
+});
+
+// PUT /api/admin/pos/store-stock  — upsert stock level for a product/variant at a branch
+const storeStockSchema = z.object({
+  storeId: z.string().uuid(),
+  productId: z.string().uuid(),
+  variantId: z.string().uuid().nullable().optional(),
+  stock: z.number().int().min(0)
+});
+
+router.put('/pos/store-stock', requirePermission('inventory:write'), async (req, res) => {
+  const parsed = storeStockSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ success: false, message: formatZodError(parsed.error) });
+  const { storeId, productId, variantId, stock } = parsed.data;
+  const [row] = await db
+    .insert(storeStock).values({ storeId, productId, variantId: variantId || null, stock })
+    .onConflictDoUpdate({ target: [storeStock.storeId, storeStock.productId, storeStock.variantId], set: { stock, updatedAt: new Date() } })
+    .returning();
+  await logAudit({
+    actorId: req.user.id, actorName: req.user.name, action: 'STORE_STOCK_UPDATE', entity: 'StoreStock',
+    entityId: row.id, newValue: `Stock set to ${stock}`, ip: req.ip
+  });
+  res.json({ success: true, row });
 });
 
 export default router;

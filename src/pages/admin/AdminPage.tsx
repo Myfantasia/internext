@@ -21,6 +21,7 @@ import { AdminDelivery } from './AdminDelivery';
 import { AdminNews } from './AdminNews';
 import { AdminPayments } from './AdminPayments';
 import { AdminFinance } from './AdminFinance';
+import { AdminPOS } from './AdminPOS';
 import { ProfilePanel } from '../../components/account/ProfilePanel';
 import { useAuth } from '../../context/AuthContext';
 
@@ -67,6 +68,7 @@ export const AdminPage: React.FC = () => {
       {activeTab === 'payments' && <AdminPayments />}
       {activeTab === 'profile' && <ProfilePanel />}
       {activeTab === 'finance' && <AdminFinance onNavigate={setActiveTab} />}
+      {activeTab === 'pos' && <AdminPOS />}
       </React.Fragment>
     </AdminLayout>
   );

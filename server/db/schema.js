@@ -574,6 +574,18 @@ export const stores = pgTable('stores', {
   lng: numeric('lng', { precision: 10, scale: 6 })
 });
 
+export const storeStock = pgTable('store_stock', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  storeId: uuid('store_id').notNull().references(() => stores.id, { onDelete: 'cascade' }),
+  productId: uuid('product_id').notNull().references(() => products.id, { onDelete: 'cascade' }),
+  variantId: uuid('variant_id').references(() => productVariants.id, { onDelete: 'cascade' }),
+  stock: integer('stock').notNull().default(0),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow()
+}, (t) => ([
+  uniqueIndex('store_stock_unique').on(t.storeId, t.productId, t.variantId),
+  check('store_stock_nonneg', sql`${t.stock} >= 0`)
+]));
+
 // ---------------------------------------------------------------------------
 // Orders
 // ---------------------------------------------------------------------------
@@ -582,6 +594,9 @@ export const orders = pgTable('orders', {
   id: uuid('id').primaryKey().defaultRandom(),
   orderNumber: text('order_number').notNull(),
   userId: uuid('user_id').references(() => users.id, { onDelete: 'set null' }),
+  salesChannel: text('sales_channel').notNull().default('online'),
+  storeId: uuid('store_id').references(() => stores.id, { onDelete: 'set null' }),
+  servedBy: uuid('served_by').references(() => users.id, { onDelete: 'set null' }),
   customerName: text('customer_name').notNull(),
   customerEmail: text('customer_email').notNull(),
   customerPhone: text('customer_phone'),
@@ -591,6 +606,7 @@ export const orders = pgTable('orders', {
   deliveryFee: numeric('delivery_fee', { precision: 12, scale: 2 }).notNull().default('0'),
   taxAmount: numeric('tax_amount', { precision: 12, scale: 2 }).notNull().default('0'),
   total: numeric('total', { precision: 12, scale: 2 }).notNull(),
+  amountPaid: numeric('amount_paid', { precision: 12, scale: 2 }).notNull().default('0'),
   currency: text('currency').notNull().default('KES'),
   status: orderStatusEnum('status').notNull().default('Pending'),
   paymentStatus: paymentStatusEnum('payment_status').notNull().default('Pending'),
@@ -617,6 +633,9 @@ export const orders = pgTable('orders', {
   index('orders_created_at_idx').on(t.createdAt),
   // Finance dashboard: revenue is booked by payment date.
   index('orders_paid_at_idx').on(t.paidAt),
+  index('orders_store_idx').on(t.storeId),
+  index('orders_channel_idx').on(t.salesChannel),
+  check('orders_channel_check', sql`${t.salesChannel} IN ('online', 'pos')`),
   check('orders_total_nonneg', sql`${t.total} >= 0`)
 ]));
 

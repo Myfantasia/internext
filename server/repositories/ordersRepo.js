@@ -1,7 +1,7 @@
 import { eq, or, and, ilike, desc, asc, sql, inArray, lt, gt, gte, lte } from 'drizzle-orm';
 import { db } from '../db/client.js';
 import {
-  orders, orderItems, orderStatusHistory, products, productVariants, flashDeals, cartItems, carts, paymentAttempts
+  orders, orderItems, orderStatusHistory, products, productVariants, flashDeals, cartItems, carts, paymentAttempts, storeStock
 } from '../db/schema.js';
 import { createInvoiceForOrder } from './invoicesRepo.js';
 import { createReceiptForPayment } from './receiptsRepo.js';
@@ -133,7 +133,11 @@ async function loadCartLines(tx, userId) {
 // (with locks), for the order itself — so the two can never disagree.
 export async function priceCart(tx, { userId, couponCode, delivery, lockCoupon = false }) {
   const rows = await loadCartLines(tx, userId);
-  if (!rows.length) throw new OrderError('Your cart is empty.', 400, { code: 'CART_EMPTY' });
+  return priceLines(tx, { rows, userId, couponCode, delivery, lockCoupon });
+}
+
+export async function priceLines(tx, { rows, userId, couponCode, delivery, lockCoupon = false, isPos = false }) {
+  if (!rows.length) throw new OrderError('No items to price.', 400, { code: 'CART_EMPTY' });
 
   const deals = await getLiveFlashDeals(rows.map((r) => r.product.id), tx);
   const lines = [];
@@ -189,6 +193,8 @@ export async function priceCart(tx, { userId, couponCode, delivery, lockCoupon =
       if (!err.code) throw err;
       deliveryError = { message: err.message, code: err.code };
     }
+  } else if (isPos) {
+    deliveryQuote = { mode: 'option', kind: 'pickup', label: 'In-Store POS', fee: 0 };
   }
 
   const profile = await getCompanyProfile(tx);
@@ -342,6 +348,150 @@ export async function createOrder({ userId, customer, couponCode, delivery, addr
     if (cart) await tx.delete(cartItems).where(eq(cartItems.cartId, cart.id));
 
     return toApiOrder(order, tx);
+  });
+}
+
+export async function createPosOrder({ userId, customer, couponCode, items, storeId, servedBy, paymentMethod, amountPaid }) {
+  if (!storeId) throw new OrderError('Store ID is required for POS transactions.', 400);
+  
+  return db.transaction(async (tx) => {
+    // 1. Convert simple item lines into the 'rows' format expected by priceLines
+    const rows = [];
+    for (const item of items) {
+      const [product] = await tx.select().from(products).where(eq(products.id, item.productId));
+      if (!product) throw new OrderError(`Product ${item.productId} not found.`, 404);
+      let variant = null;
+      if (item.variantId) {
+        [variant] = await tx.select().from(productVariants).where(eq(productVariants.id, item.variantId));
+        if (!variant) throw new OrderError(`Variant ${item.variantId} not found.`, 404);
+      }
+      rows.push({ item, product, variant });
+    }
+
+    const priced = await priceLines(tx, { rows, userId, couponCode, lockCoupon: true, isPos: true });
+    
+    // 2. Stock validation & deduction
+    for (const line of priced.lines) {
+      // Branch-level stock
+      const branchStockRows = await tx.select().from(storeStock)
+        .where(and(
+          eq(storeStock.storeId, storeId),
+          eq(storeStock.productId, line.productId),
+          line.variantId ? eq(storeStock.variantId, line.variantId) : sql`${storeStock.variantId} IS NULL`,
+          sql`${storeStock.stock} >= ${line.quantity}`
+        )).for('update');
+      
+      if (!branchStockRows.length) {
+        throw new OrderError(`Insufficient stock at this branch for ${line.name}.`, 409, { code: 'OUT_OF_STOCK_BRANCH', productId: line.productId });
+      }
+
+      await tx.update(storeStock)
+        .set({ stock: sql`${storeStock.stock} - ${line.quantity}`, updatedAt: new Date() })
+        .where(eq(storeStock.id, branchStockRows[0].id));
+
+      // Global stock
+      if (line.variantId) {
+        await tx.update(productVariants)
+          .set({ stock: sql`GREATEST(0, ${productVariants.stock} - ${line.quantity})` })
+          .where(eq(productVariants.id, line.variantId));
+      } else {
+        await tx.update(products)
+          .set({ stock: sql`GREATEST(0, ${products.stock} - ${line.quantity})` })
+          .where(eq(products.id, line.productId));
+      }
+
+      if (line.flashDealId) {
+        await tx.update(flashDeals).set({ quantitySold: sql`${flashDeals.quantitySold} + ${line.quantity}` })
+          .where(eq(flashDeals.id, line.flashDealId));
+      }
+    }
+
+    // 3. Order Creation
+    const [{ seq }] = await tx.execute(sql`select nextval('order_number_seq')::bigint as seq`);
+    const orderNumber = orderNumberFor(seq);
+    const quote = priced.deliveryQuote;
+
+    // Pos sales are typically paid immediately. We assume fully paid if amountPaid >= total
+    const isFullyPaid = Number(amountPaid) >= priced.total;
+    const finalStatus = isFullyPaid ? 'Delivered' : 'Pending';
+    const finalPaymentStatus = isFullyPaid ? 'Paid' : 'Pending';
+
+    const [order] = await tx.insert(orders).values({
+      orderNumber,
+      userId: userId || null,
+      salesChannel: 'pos',
+      storeId,
+      servedBy,
+      customerName: customer?.name || 'Walk-in Customer',
+      customerEmail: customer?.email || '',
+      customerPhone: customer?.phone || '',
+      subtotal: String(priced.subtotal),
+      discountAmount: String(priced.discountAmount),
+      couponCode: priced.coupon?.code || null,
+      flashDealSavings: String(priced.flashDealSavings),
+      deliveryFee: String(priced.deliveryFee),
+      taxAmount: String(priced.taxAmount),
+      taxRate: String(priced.taxRate),
+      total: String(priced.total),
+      amountPaid: String(amountPaid),
+      status: finalStatus,
+      paymentStatus: finalPaymentStatus,
+      paymentMethod,
+      deliveryMethod: quote.label,
+      deliveryAddress: { pickup: true, notes: 'POS Walk-in' },
+      deliveryQuote: quote,
+      trackingNumber: trackingNumberFor(),
+      paidAt: isFullyPaid ? new Date() : null
+    }).returning();
+
+    for (const line of priced.lines) {
+      await tx.insert(orderItems).values({
+        orderId: order.id,
+        productId: line.productId,
+        variantId: line.variantId,
+        name: line.name,
+        variantName: line.variantName,
+        sku: line.sku,
+        shortDescription: line.shortDescription,
+        unitPrice: String(line.unitPrice),
+        originalUnitPrice: String(line.originalUnitPrice),
+        unitCost: line.unitCost != null ? String(line.unitCost) : null,
+        flashDealId: line.flashDealId,
+        quantity: line.quantity,
+        thumbnailUrl: line.thumbnailUrl
+      });
+    }
+
+    if (priced.coupon) {
+      // In POS, if paid, we redeem it directly.
+      if (isFullyPaid) {
+        await reserveCoupon(tx, { couponId: priced.coupon.id, userId, orderId: order.id, discountAmount: priced.discountAmount });
+        await redeemCouponForOrder(tx, order.id);
+      } else {
+        await reserveCoupon(tx, { couponId: priced.coupon.id, userId, orderId: order.id, discountAmount: priced.discountAmount });
+      }
+    }
+
+    await tx.insert(orderStatusHistory).values({ orderId: order.id, status: 'Order Placed', note: `POS Order ${orderNumber} created.`, changedBy: servedBy });
+    if (isFullyPaid) {
+      await tx.insert(orderStatusHistory).values({ orderId: order.id, status: 'Payment Confirmed', note: `Payment of KES ${Number(amountPaid).toLocaleString('en-KE')} collected via ${paymentMethod}.`, changedBy: servedBy });
+    }
+
+    // Generate Invoice/Receipt
+    await createInvoiceForOrder(tx, order);
+    let receipt = null;
+    if (isFullyPaid) {
+      const res = await createReceiptForPayment(tx, order, {
+        amount: String(amountPaid),
+        paymentMethod,
+        provider: 'pos',
+        providerReference: `POS-${orderNumber}`
+      });
+      receipt = res.receipt;
+    }
+
+    const apiOrder = await toApiOrder(order, tx);
+    return { order: apiOrder, receipt };
   });
 }
 
@@ -592,13 +742,66 @@ export async function markOrderPaymentFailed(orderId, { status, reason }) {
   });
 }
 
-export async function markOrderRefunded(identifier, { reference, note }) {
+export async function markOrderRefunded(identifier, { reference, note, restock = false, amount, changedByUserId }) {
   return db.transaction(async (tx) => {
     const order = await lockOrder(tx, identifier);
     if (!order || order.paymentStatus === 'Refunded') return null;
-    await tx.update(orders).set({ paymentStatus: 'Refunded', status: 'Refunded', updatedAt: new Date() }).where(eq(orders.id, order.id));
-    await tx.insert(orderStatusHistory).values({ orderId: order.id, status: 'Refunded', note: note || `Refund processed${reference ? ` (Ref: ${reference})` : ''}.` });
-    return true;
+    
+    // Determine the refund amount. Defaults to the full amount paid, or order total if not set.
+    const refundAmount = amount != null ? Number(amount) : Number(order.amountPaid || order.total);
+    const newAmountPaid = Math.max(0, Number(order.amountPaid) - refundAmount);
+
+    if (restock) {
+      const items = await tx.select().from(orderItems).where(eq(orderItems.orderId, order.id));
+      for (const item of items) {
+        if (order.storeId) {
+          // Restore branch stock
+          const branchStockRows = await tx.select().from(storeStock)
+            .where(and(
+              eq(storeStock.storeId, order.storeId),
+              eq(storeStock.productId, item.productId),
+              item.variantId ? eq(storeStock.variantId, item.variantId) : sql`${storeStock.variantId} IS NULL`
+            )).for('update');
+          if (branchStockRows.length) {
+            await tx.update(storeStock).set({ stock: sql`${storeStock.stock} + ${item.quantity}`, updatedAt: new Date() })
+              .where(eq(storeStock.id, branchStockRows[0].id));
+          } else {
+            // It could be missing if it was manually deleted, so we recreate it
+            await tx.insert(storeStock).values({
+              storeId: order.storeId, productId: item.productId, variantId: item.variantId, stock: item.quantity
+            });
+          }
+        }
+        
+        // Restore global stock
+        if (item.variantId) {
+          await tx.update(productVariants).set({ stock: sql`${productVariants.stock} + ${item.quantity}` }).where(eq(productVariants.id, item.variantId));
+        } else {
+          await tx.update(products).set({ stock: sql`${products.stock} + ${item.quantity}` }).where(eq(products.id, item.productId));
+        }
+      }
+    }
+
+    // A full refund sets status to Refunded, partial might just lower amountPaid and leave it Delivered/Processing.
+    const isFullRefund = newAmountPaid === 0;
+    const newPaymentStatus = isFullRefund ? 'Refunded' : 'Partially Refunded';
+    const newStatus = isFullRefund ? 'Refunded' : order.status;
+
+    await tx.update(orders).set({
+      paymentStatus: newPaymentStatus,
+      status: newStatus,
+      amountPaid: String(newAmountPaid),
+      updatedAt: new Date()
+    }).where(eq(orders.id, order.id));
+
+    await tx.insert(orderStatusHistory).values({
+      orderId: order.id,
+      status: newStatus,
+      note: note || `Refund of KES ${refundAmount} processed${reference ? ` (Ref: ${reference})` : ''}.${restock ? ' Items restocked.' : ''}`,
+      changedBy: changedByUserId || null
+    });
+
+    return await toApiOrder(await lockOrder(tx, identifier), tx);
   });
 }
 

@@ -427,7 +427,7 @@ export const Header: React.FC<HeaderProps> = ({ currentPath = '/' }) => {
 
               {/* Mega Menu Overlay */}
               {isMegaMenuOpen && (
-                <div className="absolute top-full left-0 w-[960px] z-50">
+                <div className="absolute top-full left-0 w-[960px] max-w-[calc(100vw-2rem)] z-50">
                   <MegaMenu onClose={() => setIsMegaMenuOpen(false)} />
                 </div>
               )}

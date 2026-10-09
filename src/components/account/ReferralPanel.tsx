@@ -116,7 +116,7 @@ export const ReferralPanel: React.FC = () => {
         {code && <p className="text-xs text-slate-500">Generating a new code immediately cancels the current one.</p>}
       </section>
 
-      <section className="grid grid-cols-3 gap-3">
+      <section className="grid grid-cols-1 min-[420px]:grid-cols-3 gap-3">
         {[
           { label: 'Joined', value: summary.totalReferrals, icon: Users },
           { label: 'Qualified', value: summary.qualifiedReferrals, icon: CheckCircle2 },
